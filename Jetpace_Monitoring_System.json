@@ -1,0 +1,1085 @@
+[
+    {
+        "id": "97181efef207d3e8",
+        "type": "tab",
+        "label": "Flow 2",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "1e08fa9670271a81",
+        "type": "inject",
+        "z": "97181efef207d3e8",
+        "name": "Fast Poll Ticker — Every 200ms",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "0.2",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.5,
+        "topic": "",
+        "payload": "tick",
+        "payloadType": "str",
+        "x": 160,
+        "y": 120,
+        "wires": [
+            [
+                "0ab4bcc323c85bda"
+            ]
+        ]
+    },
+    {
+        "id": "ab4923ea03bd77f2",
+        "type": "inject",
+        "z": "97181efef207d3e8",
+        "name": "Background Scan — Every 30s",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "30",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 2,
+        "topic": "",
+        "payload": "slow",
+        "payloadType": "str",
+        "x": 150,
+        "y": 160,
+        "wires": [
+            [
+                "49a354ccf5940616"
+            ]
+        ]
+    },
+    {
+        "id": "0ab4bcc323c85bda",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Round-Robin Fast Poller",
+        "func": "const activeIds = flow.get('activeSlaveIds', 'file') || [];\nif (activeIds.length === 0) return null;\n\nlet idx = flow.get('rrIndex', 'file') || 0;\nif (idx >= activeIds.length) idx = 0;\n\nconst slaveId = activeIds[idx];\nflow.set('rrIndex', idx + 1, 'file');\n\nreturn [{ \n    payload: { value: 0, unitid: slaveId, fc: 3, address: 2, quantity: 1 }, \n    slaveId: slaveId, \n    scanType: 'fast' \n}];",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "const ids = Array.from({ length: 200 }, (_, i) => i + 1);\nflow.set('slaveIds', ids, 'file');\nflow.set('onlineIds', [], 'file');\nflow.set('activeSlaveIds', [], 'file');\nflow.set('rrIndex', 0, 'file');\n\nlet settings = flow.get('deviceSettings', 'file') || {};\nlet tableData = flow.get('tableData', 'file') || {};\n\nif (Object.keys(tableData).length === 0) {\n    for (let id of ids) {\n        let device = settings['slave_' + id] || { Location: '', RoomNo: '', LSP: 0, HSP: 0 };\n        tableData['slave_' + id] = { \n            ID: id, \n            Location: device.Location, \n            RoomNo: device.RoomNo, \n            DPValue: '—', \n            LSP: device.LSP, \n            HSP: device.HSP, \n            Alarm: 'OFFLINE', \n            Status: 'OFFLINE', \n            lastSeen: 0 \n        };\n    }\n    flow.set('tableData', tableData, 'file');\n}\n\nif (!flow.get('locationOptions', 'file')) {\n    flow.set('locationOptions', [], 'file');\n}\nif (!flow.get('roomNoOptions', 'file')) {\n    flow.set('roomNoOptions', [], 'file');\n}",
+        "finalize": "",
+        "libs": [],
+        "x": 390,
+        "y": 60,
+        "wires": [
+            [
+                "380c9e916a487d96"
+            ]
+        ]
+    },
+    {
+        "id": "49a354ccf5940616",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Background Scan Builder",
+        "func": "const activeIds = flow.get('activeSlaveIds', 'file') || [];\nif (activeIds.length === 0) return null;\n\nflow.set('bgScanQueue', activeIds.slice(1), 'file');\n\nreturn [{ \n    payload: { value: 0, unitid: activeIds[0], fc: 3, address: 2, quantity: 1 }, \n    slaveId: activeIds[0], \n    scanType: 'slow' \n}];",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 200,
+        "wires": [
+            [
+                "380c9e916a487d96"
+            ]
+        ]
+    },
+    {
+        "id": "a170ba761cf502cc",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Update Row — OFFLINE",
+        "func": "let slaveId = (msg.modbusRequest && msg.modbusRequest.unitid) || (msg.payload && msg.payload.unitid) || (msg.payload && msg.payload.modbusRequest && msg.payload.modbusRequest.unitid) || msg.slaveId || null;\nif (!slaveId) { node.warn('OFFLINE: slaveId not found'); return null; }\n\nlet tableData = flow.get('tableData', 'file') || {};\nlet existing = tableData['slave_' + slaveId];\nlet now = Date.now();\n\nif (existing && existing.lastSeen && (now - existing.lastSeen) < 5000) {\n    const SLAVE_IDS = flow.get('slaveIds', 'file') || [];\n    msg.payload = SLAVE_IDS.map(id => tableData['slave_' + id] || { \n        ID: id, Location: '', RoomNo: '', DPValue: '—', LSP: -60, HSP: 60, Alarm: 'OFFLINE', Status: 'OFFLINE', lastSeen: 0 \n    });\n    return msg;\n}\n\nlet settings = flow.get('deviceSettings', 'file') || {};\nlet device = settings['slave_' + slaveId] || { Location: '', RoomNo: '', LSP: -60, HSP: 60 };\n\ntableData['slave_' + slaveId] = { \n    ID: slaveId, \n    Location: device.Location, \n    RoomNo: device.RoomNo, \n    DPValue: '—', \n    LSP: device.LSP, \n    HSP: device.HSP, \n    Alarm: 'OFFLINE', \n    Status: 'OFFLINE', \n    lastSeen: existing ? existing.lastSeen : 0 \n};\nflow.set('tableData', tableData, 'file');\n\nlet onlineIds = flow.get('onlineIds', 'file') || [];\nlet idx = onlineIds.indexOf(slaveId);\nif (idx !== -1) { \n    onlineIds.splice(idx, 1); \n    flow.set('onlineIds', onlineIds, 'file'); \n}\n\nconst SLAVE_IDS = flow.get('slaveIds', 'file') || [];\nmsg.payload = SLAVE_IDS.map(id => tableData['slave_' + id] || { \n    ID: id, Location: '', RoomNo: '', DPValue: '—', LSP: -60, HSP: 60, Alarm: 'OFFLINE', Status: 'OFFLINE', lastSeen: 0 \n});\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 810,
+        "y": 200,
+        "wires": [
+            [
+                "1a0d67c383948198"
+            ]
+        ]
+    },
+    {
+        "id": "0a1e413cc96dd1e4",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Prepare Log Insert",
+        "func": "if (!msg._logEntry) return null;\n\nconst e = msg._logEntry;\n\nif (typeof e.slaveId === 'undefined' || typeof e.dpValue === 'undefined') {\n    node.warn(\"[dp_log] Missing slaveId or dpValue\");\n    return null;\n}\n\nconst dt = new Date(e.ts);\n\nif (isNaN(dt.getTime())) {\n    node.warn(`[dp_log] Invalid timestamp received: ${e.ts}`);\n    return null;\n}\n\nconst year = dt.getFullYear();\nconst month = String(dt.getMonth() + 1).padStart(2, '0');\nconst day = String(dt.getDate()).padStart(2, '0');\nconst hours = String(dt.getHours()).padStart(2, '0');\nconst minutes = String(dt.getMinutes()).padStart(2, '0');\nconst seconds = String(dt.getSeconds()).padStart(2, '0');\n\nconst ts = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;\n\nconst slaveId = Number(e.slaveId);\nconst dpValue = Number(e.dpValue);\nconst alarm = (e.alarm || 'NORMAL').replace(/'/g, \"''\");\n\nmsg.topic = `INSERT INTO dp_log (slave_id, dp_value, alarm_status, logged_at) \n             VALUES (${slaveId}, ${dpValue}, '${alarm}', '${ts}')`;\n\nmsg.payload = {};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1050,
+        "y": 80,
+        "wires": [
+            [
+                "c6bec7b66b215757"
+            ]
+        ]
+    },
+    {
+        "id": "13658c8dbb45fa5b",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Set Active Slave IDs",
+        "func": "if (!msg.payload || msg.payload.action !== 'set-active-ids') return null;\n\nconst raw = (msg.payload.raw || '').trim();\nconst ids = new Set();\n\nraw.split(',').forEach(part => {\n    part = part.trim();\n    const rangeMatch = part.match(/^(\\d+)-(\\d+)$/);\n    if (rangeMatch) { \n        const from = parseInt(rangeMatch[1]), to = parseInt(rangeMatch[2]); \n        for (let i = from; i <= to && i <= 200; i++) ids.add(i); \n    }\n    else { \n        const n = parseInt(part); \n        if (!isNaN(n) && n >= 1 && n <= 200) ids.add(n); \n    }\n});\n\nconst sorted = Array.from(ids).sort((a,b)=>a-b);\nflow.set('activeSlaveIds', sorted, 'file');\nflow.set('rrIndex', 0, 'file');\n\nconst tableData = flow.get('tableData', 'file') || {};\nconst settings = flow.get('deviceSettings', 'file') || {};\nconst allIds = flow.get('slaveIds', 'file') || [];\n\nfor (let id of allIds) {\n    if (!ids.has(id)) {\n        const device = settings['slave_' + id] || { Location: '', RoomNo: '', LSP: 0, HSP: 0 };\n        tableData['slave_' + id] = { \n            ID: id, \n            Location: device.Location, \n            RoomNo: device.RoomNo, \n            DPValue: '—', \n            LSP: device.LSP, \n            HSP: device.HSP, \n            Alarm: 'OFFLINE', \n            Status: 'OFFLINE', \n            lastSeen: 0 \n        };\n    }\n}\nflow.set('tableData', tableData, 'file');\n\nmsg.payload = allIds.map(id => tableData['slave_' + id] || { \n    ID: id, Location: '', RoomNo: '', DPValue: '—', LSP: 0, HSP: 0, Alarm: 'OFFLINE', Status: 'OFFLINE', lastSeen: 0 \n});\n\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1260,
+        "y": 140,
+        "wires": [
+            [
+                "1a0d67c383948198"
+            ]
+        ]
+    },
+    {
+        "id": "f12549b2dd6d34ab",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Validate Auth",
+        "func": "if (!msg.payload || msg.payload.action !== 'auth-check') return null;\nconst ADMIN_ID = 'Jetpace';\nconst ADMIN_PASS = 'Jetpace';\nconst now = Date.now();\nconst lockUntil = flow.get('authLockUntil', 'file') || 0;\nif (now < lockUntil) { const secsLeft = Math.ceil((lockUntil - now) / 1000); msg.payload = { action: 'auth-result', success: false, locked: true, secsLeft }; return msg; }\nconst enteredId = (msg.payload.userId || '').trim();\nconst enteredPass = (msg.payload.password || '').trim();\nif (enteredId === ADMIN_ID && enteredPass === ADMIN_PASS) { flow.set('authFailCount', 0, 'file'); flow.set('authLockUntil', 0, 'file'); msg.payload = { action: 'auth-result', success: true }; }\nelse { let fails = (flow.get('authFailCount', 'file') || 0) + 1; flow.set('authFailCount', fails, 'file'); if (fails >= 3) { flow.set('authLockUntil', now + 60*1000, 'file'); flow.set('authFailCount', 0, 'file'); msg.payload = { action: 'auth-result', success: false, locked: true, secsLeft: 60 }; } else { msg.payload = { action: 'auth-result', success: false, locked: false, attemptsLeft: 3 - fails }; } }\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1290,
+        "y": 320,
+        "wires": [
+            [
+                "1a0d67c383948198"
+            ]
+        ]
+    },
+    {
+        "id": "13a3e868b59d5c99",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Build Report Query",
+        "func": "if (!msg.payload || msg.payload.action !== 'report-query') return null;\n\nconst p = msg.payload;\nconst slaveIds = (p.slaveIds || []).map(Number).filter(n => n >= 1 && n <= 200);\n\nif (slaveIds.length === 0) {\n    msg.payload = { action: 'report-result', error: 'No slave IDs selected.' };\n    return [null, msg];\n}\nif (!p.dateFrom || !p.dateTo) {\n    msg.payload = { action: 'report-result', error: 'Both From and To dates are required.' };\n    return [null, msg];\n}\n\nconst dateStart = p.dateFrom + ' 00:00:00';\nconst dateEnd = p.dateTo + ' 23:59:59';\n\nlet formatStr, groupBy;\n\nif (p.interval === 'hourly') {\n    formatStr = 'yyyy-MM-dd HH:00:00';\n    groupBy = 'slave_id, FORMAT(logged_at, \\'yyyy-MM-dd HH:00:00\\')';\n} else if (p.interval === 'minutely') {\n    formatStr = 'yyyy-MM-dd HH:mm:00';\n    groupBy = 'slave_id, FORMAT(logged_at, \\'yyyy-MM-dd HH:mm:00\\')';\n} else {\n    formatStr = 'yyyy-MM-dd';\n    groupBy = 'slave_id, FORMAT(logged_at, \\'yyyy-MM-dd\\')';\n}\n\nconst firstAlertSelect = `\n    MIN(CASE WHEN alarm_status = 'ALERT' THEN logged_at ELSE NULL END) AS first_alert_ts,\n    (\n        SELECT TOP 1 dp_value \n        FROM dp_log AS inner_log \n        WHERE inner_log.slave_id = dp_log.slave_id \n          AND FORMAT(inner_log.logged_at, '${formatStr}') = FORMAT(dp_log.logged_at, '${formatStr}')\n          AND inner_log.alarm_status = 'ALERT'\n        ORDER BY inner_log.logged_at ASC\n    ) AS first_alert_dp_value\n`;\n\nmsg.topic = `\nSELECT \n    slave_id, \n    FORMAT(logged_at, '${formatStr}') AS period, \n    ROUND(AVG(CAST(dp_value AS FLOAT)), 2) AS dp_value, \n    MAX(CASE WHEN alarm_status='ALERT' THEN 1 ELSE 0 END) AS had_alert,\n    ${firstAlertSelect}\nFROM dp_log \nWHERE slave_id IN (${slaveIds.join(',')}) \n  AND logged_at BETWEEN '${dateStart}' AND '${dateEnd}'\nGROUP BY ${groupBy} \nORDER BY slave_id, period\n`;\n\nmsg.payload = {};\nmsg._reportMeta = { slaveIds, interval: p.interval, dateFrom: p.dateFrom, dateTo: p.dateTo };\n\nreturn [msg, null];",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 950,
+        "y": 420,
+        "wires": [
+            [
+                "d3df8a5e10be55c3"
+            ],
+            []
+        ]
+    },
+    {
+        "id": "2c94577b069d4261",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Manage Dropdown Options",
+        "func": "if (!msg.payload || !msg.payload.action) return null;\n\nif (msg.payload.action === 'save-options') {\n    flow.set('locationOptions', msg.payload.locations || [], 'file');\n    flow.set('roomNoOptions', msg.payload.rooms || [], 'file');\n    return null;\n}\n\nif (msg.payload.action === 'load-options') {\n    const locations = flow.get('locationOptions', 'file') || [];\n    const rooms = flow.get('roomNoOptions', 'file') || [];\n    msg.payload = { action: 'load-options', locations, rooms };\n    return msg;\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1580,
+        "y": 360,
+        "wires": [
+            [
+                "1a0d67c383948198"
+            ]
+        ]
+    },
+    {
+        "id": "380c9e916a487d96",
+        "type": "modbus-flex-getter",
+        "z": "97181efef207d3e8",
+        "name": "",
+        "showStatusActivities": false,
+        "showErrors": false,
+        "showWarnings": true,
+        "logIOActivities": false,
+        "server": "c3160ca54743c360",
+        "useIOFile": false,
+        "ioFile": "",
+        "useIOForPayload": false,
+        "emptyMsgOnFail": false,
+        "keepMsgProperties": true,
+        "delayOnStart": false,
+        "enableDeformedMessages": false,
+        "startDelayTime": "",
+        "x": 570,
+        "y": 120,
+        "wires": [
+            [
+                "c61cb8c4da7010c9"
+            ],
+            [
+                "a170ba761cf502cc"
+            ]
+        ]
+    },
+    {
+        "id": "c6bec7b66b215757",
+        "type": "MSSQL",
+        "z": "97181efef207d3e8",
+        "mssqlCN": "50c3fd16ed798901",
+        "name": "Live_Table_MSSQL",
+        "outField": "payload",
+        "returnType": 0,
+        "throwErrors": 1,
+        "query": "",
+        "modeOpt": "queryMode",
+        "modeOptType": "query",
+        "queryOpt": "topic",
+        "queryOptType": "msg",
+        "paramsOpt": "",
+        "paramsOptType": "none",
+        "rows": "rows",
+        "rowsType": "msg",
+        "parseMustache": false,
+        "params": [],
+        "x": 1280,
+        "y": 80,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "d3df8a5e10be55c3",
+        "type": "MSSQL",
+        "z": "97181efef207d3e8",
+        "mssqlCN": "50c3fd16ed798901",
+        "name": "Daily Report MSSQL",
+        "outField": "payload",
+        "returnType": 0,
+        "throwErrors": 1,
+        "query": "",
+        "modeOpt": "queryMode",
+        "modeOptType": "query",
+        "queryOpt": "topic",
+        "queryOptType": "msg",
+        "paramsOpt": "queryParams",
+        "paramsOptType": "msg",
+        "rows": "rows",
+        "rowsType": "msg",
+        "parseMustache": false,
+        "params": [],
+        "x": 1200,
+        "y": 420,
+        "wires": [
+            [
+                "99ca09cc0be8d109"
+            ]
+        ]
+    },
+    {
+        "id": "c61cb8c4da7010c9",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "function 1",
+        "func": "if (msg.error || msg.payload === undefined || msg.payload === null) {\n    node.warn(`Modbus error or empty response for slave ${msg.slaveId || '?'}`);\n    return [null, msg];\n}\n\nif (Buffer.isBuffer(msg.payload)) {\n    msg.payload = Array.from(msg.payload);\n}\n\nif (!Array.isArray(msg.payload)) {\n    if (msg.payload && Array.isArray(msg.payload.data)) {\n        msg.payload = msg.payload.data;\n    } else {\n        msg.payload = [];\n    }\n}\n\nreturn [msg, null];",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 760,
+        "y": 120,
+        "wires": [
+            [
+                "5b564fa60887b371"
+            ]
+        ]
+    },
+    {
+        "id": "47c02abe22b9849f",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Validate Login",
+        "func": "if (!msg.payload) return null;\n\n// LOGOUT: clear session when login page is opened\nif (msg.payload.action === 'logout') {\n    const socketId = msg._client ? msg._client.socketId : null;\n    if (socketId) {\n        let authSockets = flow.get('authenticatedSockets') || {};\n        delete authSockets[socketId];\n        flow.set('authenticatedSockets', authSockets);\n    }\n    return null;\n}\n\nif (msg.payload.action !== 'login-check') return null;\n\nconst ADMIN_ID   = 'Jetpace';\nconst ADMIN_PASS = 'Jetpace';\n\nconst userId   = (msg.payload.userId   || '').trim();\nconst password = (msg.payload.password || '').trim();\nconst socketId = msg._client ? msg._client.socketId : 'unknown';\nconst now      = Date.now();\n\nconst lockKey   = 'loginLock_'  + socketId;\nconst failKey   = 'loginFails_' + socketId;\nconst lockUntil = flow.get(lockKey) || 0;\n\nif (now < lockUntil) {\n    const secsLeft = Math.ceil((lockUntil - now) / 1000);\n    msg.payload = { action: 'login-result', success: false, locked: true, secsLeft };\n    return [null, msg];\n}\n\nconst fails = flow.get(failKey) || 0;\n\nif (userId === ADMIN_ID && password === ADMIN_PASS) {\n    flow.set(failKey, 0);\n    flow.set(lockKey, 0);\n    let authSockets = flow.get('authenticatedSockets') || {};\n    authSockets[socketId] = { ts: now, userId: userId };\n    flow.set('authenticatedSockets', authSockets);\n\n    const client = msg._client;\n    msg.payload  = { page: 'DP' };\n    msg._client  = client;\n    return [msg, null];\n\n} else {\n    const newFails = fails + 1;\n    flow.set(failKey, newFails);\n\n    if (newFails >= 3) {\n        flow.set(lockKey,  now + 60000);\n        flow.set(failKey,  0);\n        msg.payload = { action: 'login-result', success: false, locked: true, secsLeft: 60 };\n    } else {\n        msg.payload = { action: 'login-result', success: false, locked: false, attemptsLeft: 3 - newFails };\n    }\n    return [null, msg];\n}",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 550,
+        "y": 520,
+        "wires": [
+            [
+                "9114013b4db7087e"
+            ],
+            [
+                "5bc00f43f8243c18"
+            ]
+        ]
+    },
+    {
+        "id": "9114013b4db7087e",
+        "type": "ui-control",
+        "z": "97181efef207d3e8",
+        "name": "Navigate to DP",
+        "ui": "98488f60b3c1e6bb",
+        "x": 780,
+        "y": 520,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "b3d05610a9076778",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Perf Live Data Pusher",
+        "func": "// Receives from Update Row — ONLINE.\n// msg._logEntry = { slaveId, dpValue, alarm, ts }\nif (!msg._logEntry) return null;\n\nconst e = msg._logEntry;\n\nmsg.payload = {\n    action: 'chart-live-point',\n    slaveId: Number(e.slaveId),\n    dpValue: Number(e.dpValue),\n    alarm: e.alarm,\n    ts: e.ts\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 200,
+        "y": 680,
+        "wires": [
+            [
+                "a4e429b74fa5232c"
+            ]
+        ]
+    },
+    {
+        "id": "25557eb1d4495d75",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Route Perf UI Messages",
+        "func": "if (!msg.payload || !msg.payload.action) return null;\n\n// chart-query → Build Chart Query\nif (msg.payload.action === 'chart-query') return [msg, null];\n\n// session-check / do-logout → Session Check + Logout node\nif (msg.payload.action === 'session-check' || msg.payload.action === 'do-logout') return [null, msg];\n\nreturn null;",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 590,
+        "y": 600,
+        "wires": [
+            [
+                "91876e03a21f2312"
+            ],
+            [
+                "fb91e59e598a84a3"
+            ]
+        ]
+    },
+    {
+        "id": "91876e03a21f2312",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Build Chart Query",
+        "func": "if (!msg.payload || msg.payload.action !== 'chart-query') return null;\n\nconst p = msg.payload;\nconst slaveId = Number(p.slaveId);\n\nif (isNaN(slaveId) || slaveId < 1 || slaveId > 200) {\n    msg.payload = { action: 'chart-history-result', error: 'Invalid Slave ID (must be 1–200).' };\n    return [null, msg];\n}\nif (!p.dateFrom || !p.dateTo) {\n    msg.payload = { action: 'chart-history-result', error: 'Both From and To dates are required.' };\n    return [null, msg];\n}\n\nconst dateStart = p.dateFrom + ' 00:00:00';\nconst dateEnd   = p.dateTo   + ' 23:59:59';\n\nlet formatStr, groupBy;\nif (p.interval === 'hourly') {\n    formatStr = \"yyyy-MM-dd HH:00:00\";\n    groupBy   = \"FORMAT(logged_at, 'yyyy-MM-dd HH:00:00')\";\n} else if (p.interval === 'minutely') {\n    formatStr = \"yyyy-MM-dd HH:mm:00\";\n    groupBy   = \"FORMAT(logged_at, 'yyyy-MM-dd HH:mm:00')\";\n} else {\n    formatStr = \"yyyy-MM-dd\";\n    groupBy   = \"FORMAT(logged_at, 'yyyy-MM-dd')\";\n}\n\nmsg.topic = `\nSELECT\n    FORMAT(logged_at, '${formatStr}') AS period,\n    ROUND(AVG(CAST(dp_value AS FLOAT)), 2) AS dp_value,\n    MAX(CASE WHEN alarm_status = 'ALERT' THEN 1 ELSE 0 END) AS had_alert\nFROM dp_log\nWHERE slave_id = ${slaveId}\n  AND logged_at BETWEEN '${dateStart}' AND '${dateEnd}'\nGROUP BY ${groupBy}\nORDER BY period\n`;\n\nmsg.payload = {};\nmsg._chartMeta = { slaveId, interval: p.interval, dateFrom: p.dateFrom, dateTo: p.dateTo };\n\nreturn [msg, null];",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 870,
+        "y": 600,
+        "wires": [
+            [
+                "4aead29e05750508"
+            ],
+            [
+                "a4e429b74fa5232c"
+            ]
+        ]
+    },
+    {
+        "id": "7dbbf309745d130a",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Format Chart Result",
+        "func": "const rows = msg.payload || [];\nconst meta  = msg._chartMeta || {};\n\nmsg.payload = {\n    action: 'chart-history-result',\n    rows: rows.map(r => ({\n        period:    r.period,\n        dp_value:  parseFloat(r.dp_value),\n        had_alert: r.had_alert === 1 || r.had_alert === true\n    })),\n    meta:  meta,\n    count: rows.length\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1330,
+        "y": 600,
+        "wires": [
+            [
+                "a4e429b74fa5232c"
+            ]
+        ]
+    },
+    {
+        "id": "4aead29e05750508",
+        "type": "MSSQL",
+        "z": "97181efef207d3e8",
+        "mssqlCN": "50c3fd16ed798901",
+        "name": "MSSQL Chart Query",
+        "outField": "payload",
+        "returnType": 0,
+        "throwErrors": 1,
+        "query": "",
+        "modeOpt": "queryMode",
+        "modeOptType": "query",
+        "queryOpt": "topic",
+        "queryOptType": "msg",
+        "paramsOpt": "",
+        "paramsOptType": "none",
+        "rows": "rows",
+        "rowsType": "msg",
+        "parseMustache": false,
+        "params": [],
+        "x": 1110,
+        "y": 600,
+        "wires": [
+            [
+                "7dbbf309745d130a"
+            ]
+        ]
+    },
+    {
+        "id": "5b564fa60887b371",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Update Row — ONLINE",
+        "func": "let slaveId = (msg.modbusRequest && msg.modbusRequest.unitid) || (msg.payload && msg.payload.unitid) || msg.slaveId || null;\nif (!slaveId) { node.warn('ONLINE: slaveId not found'); return null; }\n\nlet raw = Array.isArray(msg.payload) ? msg.payload : (msg.payload && msg.payload.data ? Array.from(msg.payload.data) : []);\n\nfunction toSigned16(val) { return val > 32767 ? val - 65536 : val; }\n\nlet settings = flow.get('deviceSettings', 'file') || {};\nlet device = settings['slave_' + slaveId] || { Location: '', RoomNo: '', LSP: -60, HSP: 60 };\n\nlet dpValue = toSigned16(raw[0] ?? 0);\nlet alarm = (dpValue < device.LSP || dpValue > device.HSP) ? 'ALERT' : 'NORMAL';\nlet now = Date.now();\n\nlet row = { \n    ID: slaveId, \n    Location: device.Location, \n    RoomNo: device.RoomNo, \n    DPValue: dpValue, \n    LSP: device.LSP, \n    HSP: device.HSP, \n    Alarm: alarm, \n    Status: 'ONLINE', \n    lastSeen: now \n};\n\nlet tableData = flow.get('tableData', 'file') || {};\ntableData['slave_' + slaveId] = row;\nflow.set('tableData', tableData, 'file');\n\nlet onlineIds = flow.get('onlineIds', 'file') || [];\nif (!onlineIds.includes(slaveId)) { \n    onlineIds.push(slaveId); \n    onlineIds.sort((a,b)=>a-b); \n    flow.set('onlineIds', onlineIds, 'file'); \n}\n\nconst SLAVE_IDS = flow.get('slaveIds', 'file') || [];\nmsg.payload = SLAVE_IDS.map(id => tableData['slave_' + id] || { \n    ID: id, Location: '', RoomNo: '', DPValue: '—', LSP: -60, HSP: 60, Alarm: 'OFFLINE', Status: 'OFFLINE', lastSeen: 0 \n});\n\nmsg._logEntry = { slaveId, dpValue, alarm, ts: now };\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 770,
+        "y": 60,
+        "wires": [
+            [
+                "0a1e413cc96dd1e4",
+                "b3d05610a9076778",
+                "1a0d67c383948198"
+            ]
+        ]
+    },
+    {
+        "id": "fb91e59e598a84a3",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Session Check + Logout",
+        "func": "if (!msg.payload) return null;\n\n// Handle logout from DP page user menu\nif (msg.payload.action === 'do-logout') {\n    const socketId = msg._client ? msg._client.socketId : null;\n    if (socketId) {\n        let authSockets = flow.get('authenticatedSockets') || {};\n        delete authSockets[socketId];\n        flow.set('authenticatedSockets', authSockets);\n    }\n    msg.payload = { action: 'navigate-login' };\n    return msg;\n}\n\nif (msg.payload.action !== 'session-check') return null;\n\nconst socketId = msg._client ? msg._client.socketId : null;\nconst authSockets = flow.get('authenticatedSockets') || {};\nconst session = socketId ? authSockets[socketId] : null;\nconst authenticated = !!session;\n\nmsg.payload = {\n    action: 'session-result',\n    authenticated: authenticated,\n    userId: authenticated ? (session.userId || 'admin') : null\n};\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1630,
+        "y": 200,
+        "wires": [
+            [
+                "a4e429b74fa5232c",
+                "1a0d67c383948198"
+            ]
+        ]
+    },
+    {
+        "id": "5bc00f43f8243c18",
+        "type": "ui-template",
+        "z": "97181efef207d3e8",
+        "group": "ec2d755068cc1a13",
+        "page": "",
+        "ui": "",
+        "name": "Login Page",
+        "order": 2,
+        "width": "0",
+        "height": "0",
+        "head": "",
+        "format": "<template>\n<div style=\"position:relative;min-height:80vh;display:flex;align-items:center;justify-content:center;padding:20px;overflow:hidden;background:#0b1e33;\">\n\n  <!-- Circuit Board Background -->\n  <div style=\"position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;\">\n    <svg width=\"100%\" height=\"100%\" viewBox=\"0 0 1920 1080\" preserveAspectRatio=\"xMidYMid slice\" xmlns=\"http://www.w3.org/2000/svg\">\n      <g stroke=\"rgba(0,148,206,0.04)\" stroke-width=\"0.5\" fill=\"none\">\n        <line x1=\"0\" y1=\"200\" x2=\"1920\" y2=\"200\"/><line x1=\"0\" y1=\"400\" x2=\"1920\" y2=\"400\"/><line x1=\"0\" y1=\"600\" x2=\"1920\" y2=\"600\"/><line x1=\"0\" y1=\"800\" x2=\"1920\" y2=\"800\"/><line x1=\"0\" y1=\"1000\" x2=\"1920\" y2=\"1000\"/>\n        <line x1=\"200\" y1=\"0\" x2=\"200\" y2=\"1080\"/><line x1=\"400\" y1=\"0\" x2=\"400\" y2=\"1080\"/><line x1=\"600\" y1=\"0\" x2=\"600\" y2=\"1080\"/><line x1=\"800\" y1=\"0\" x2=\"800\" y2=\"1080\"/><line x1=\"1000\" y1=\"0\" x2=\"1000\" y2=\"1080\"/><line x1=\"1200\" y1=\"0\" x2=\"1200\" y2=\"1080\"/><line x1=\"1400\" y1=\"0\" x2=\"1400\" y2=\"1080\"/><line x1=\"1600\" y1=\"0\" x2=\"1600\" y2=\"1080\"/><line x1=\"1800\" y1=\"0\" x2=\"1800\" y2=\"1080\"/>\n      </g>\n      <g stroke=\"rgba(0,148,206,0.24)\" stroke-width=\"1.5\" fill=\"none\">\n        <line x1=\"0\" y1=\"68\" x2=\"78\" y2=\"68\"/><line x1=\"162\" y1=\"68\" x2=\"300\" y2=\"68\"/><line x1=\"370\" y1=\"68\" x2=\"560\" y2=\"68\"/>\n        <line x1=\"0\" y1=\"148\" x2=\"200\" y2=\"148\"/><line x1=\"265\" y1=\"148\" x2=\"440\" y2=\"148\"/>\n        <line x1=\"0\" y1=\"232\" x2=\"62\" y2=\"232\"/><line x1=\"152\" y1=\"232\" x2=\"380\" y2=\"232\"/><line x1=\"448\" y1=\"232\" x2=\"630\" y2=\"232\"/>\n        <line x1=\"0\" y1=\"312\" x2=\"62\" y2=\"312\"/><line x1=\"152\" y1=\"312\" x2=\"340\" y2=\"312\"/>\n        <line x1=\"0\" y1=\"392\" x2=\"62\" y2=\"392\"/><line x1=\"152\" y1=\"392\" x2=\"530\" y2=\"392\"/><line x1=\"624\" y1=\"392\" x2=\"860\" y2=\"392\"/>\n        <line x1=\"0\" y1=\"462\" x2=\"62\" y2=\"462\"/><line x1=\"152\" y1=\"462\" x2=\"390\" y2=\"462\"/>\n        <line x1=\"0\" y1=\"532\" x2=\"62\" y2=\"532\"/><line x1=\"152\" y1=\"532\" x2=\"290\" y2=\"532\"/>\n        <line x1=\"0\" y1=\"610\" x2=\"42\" y2=\"610\"/><line x1=\"107\" y1=\"610\" x2=\"360\" y2=\"610\"/><line x1=\"450\" y1=\"610\" x2=\"700\" y2=\"610\"/>\n        <line x1=\"42\" y1=\"690\" x2=\"310\" y2=\"690\"/><line x1=\"400\" y1=\"690\" x2=\"570\" y2=\"690\"/>\n        <line x1=\"42\" y1=\"770\" x2=\"210\" y2=\"770\"/><line x1=\"295\" y1=\"770\" x2=\"490\" y2=\"770\"/>\n        <line x1=\"42\" y1=\"850\" x2=\"107\" y2=\"850\"/><line x1=\"42\" y1=\"930\" x2=\"365\" y2=\"930\"/>\n        <line x1=\"210\" y1=\"1010\" x2=\"620\" y2=\"1010\"/>\n        <line x1=\"1585\" y1=\"82\" x2=\"1790\" y2=\"82\"/><line x1=\"1862\" y1=\"82\" x2=\"1920\" y2=\"82\"/>\n        <line x1=\"1608\" y1=\"142\" x2=\"1790\" y2=\"142\"/><line x1=\"1862\" y1=\"142\" x2=\"1920\" y2=\"142\"/>\n        <line x1=\"1650\" y1=\"202\" x2=\"1790\" y2=\"202\"/>\n        <line x1=\"1650\" y1=\"262\" x2=\"1790\" y2=\"262\"/>\n        <line x1=\"1585\" y1=\"708\" x2=\"1665\" y2=\"708\"/><line x1=\"1775\" y1=\"708\" x2=\"1920\" y2=\"708\"/>\n        <line x1=\"1600\" y1=\"768\" x2=\"1665\" y2=\"768\"/><line x1=\"1775\" y1=\"768\" x2=\"1920\" y2=\"768\"/>\n        <line x1=\"1585\" y1=\"828\" x2=\"1665\" y2=\"828\"/><line x1=\"1775\" y1=\"828\" x2=\"1920\" y2=\"828\"/>\n        <line x1=\"1650\" y1=\"888\" x2=\"1920\" y2=\"888\"/>\n        <line x1=\"1690\" y1=\"968\" x2=\"1920\" y2=\"968\"/>\n      </g>\n      <g stroke=\"rgba(0,148,206,0.24)\" stroke-width=\"1.5\" fill=\"none\">\n        <line x1=\"78\" y1=\"0\" x2=\"78\" y2=\"68\"/><line x1=\"78\" y1=\"148\" x2=\"78\" y2=\"232\"/><line x1=\"78\" y1=\"610\" x2=\"78\" y2=\"770\"/>\n        <line x1=\"162\" y1=\"68\" x2=\"162\" y2=\"148\"/>\n        <line x1=\"200\" y1=\"148\" x2=\"200\" y2=\"232\"/><line x1=\"200\" y1=\"770\" x2=\"200\" y2=\"930\"/>\n        <line x1=\"265\" y1=\"68\" x2=\"265\" y2=\"148\"/><line x1=\"265\" y1=\"312\" x2=\"265\" y2=\"462\"/>\n        <line x1=\"340\" y1=\"68\" x2=\"340\" y2=\"232\"/><line x1=\"340\" y1=\"462\" x2=\"340\" y2=\"610\"/>\n        <line x1=\"390\" y1=\"68\" x2=\"390\" y2=\"148\"/><line x1=\"390\" y1=\"232\" x2=\"390\" y2=\"462\"/><line x1=\"390\" y1=\"690\" x2=\"390\" y2=\"770\"/>\n        <line x1=\"448\" y1=\"148\" x2=\"448\" y2=\"232\"/><line x1=\"448\" y1=\"392\" x2=\"448\" y2=\"610\"/><line x1=\"448\" y1=\"930\" x2=\"448\" y2=\"1010\"/>\n        <line x1=\"530\" y1=\"392\" x2=\"530\" y2=\"532\"/><line x1=\"530\" y1=\"690\" x2=\"530\" y2=\"770\"/>\n        <line x1=\"624\" y1=\"232\" x2=\"624\" y2=\"392\"/><line x1=\"624\" y1=\"610\" x2=\"624\" y2=\"930\"/>\n        <line x1=\"700\" y1=\"610\" x2=\"700\" y2=\"930\"/><line x1=\"700\" y1=\"1010\" x2=\"700\" y2=\"1080\"/>\n        <line x1=\"860\" y1=\"392\" x2=\"860\" y2=\"610\"/>\n        <line x1=\"1585\" y1=\"0\" x2=\"1585\" y2=\"82\"/><line x1=\"1585\" y1=\"708\" x2=\"1585\" y2=\"828\"/>\n        <line x1=\"1650\" y1=\"0\" x2=\"1650\" y2=\"82\"/><line x1=\"1650\" y1=\"202\" x2=\"1650\" y2=\"262\"/><line x1=\"1650\" y1=\"708\" x2=\"1650\" y2=\"888\"/>\n        <line x1=\"1790\" y1=\"82\" x2=\"1790\" y2=\"708\"/>\n        <line x1=\"1862\" y1=\"0\" x2=\"1862\" y2=\"82\"/><line x1=\"1862\" y1=\"142\" x2=\"1862\" y2=\"708\"/><line x1=\"1862\" y1=\"708\" x2=\"1862\" y2=\"1080\"/>\n        <line x1=\"1775\" y1=\"708\" x2=\"1775\" y2=\"828\"/>\n      </g>\n      <g fill=\"rgba(0,148,206,0.55)\" stroke=\"rgba(0,148,206,0.8)\" stroke-width=\"0.7\">\n        <circle cx=\"78\" cy=\"68\" r=\"3.5\"/><circle cx=\"78\" cy=\"148\" r=\"3.5\"/><circle cx=\"78\" cy=\"232\" r=\"3.5\"/><circle cx=\"78\" cy=\"610\" r=\"3.5\"/><circle cx=\"78\" cy=\"770\" r=\"3.5\"/>\n        <circle cx=\"162\" cy=\"68\" r=\"3.5\"/><circle cx=\"200\" cy=\"148\" r=\"3.5\"/><circle cx=\"200\" cy=\"232\" r=\"3.5\"/><circle cx=\"200\" cy=\"770\" r=\"3.5\"/><circle cx=\"200\" cy=\"930\" r=\"3.5\"/>\n        <circle cx=\"265\" cy=\"68\" r=\"3.5\"/><circle cx=\"265\" cy=\"148\" r=\"3.5\"/><circle cx=\"265\" cy=\"312\" r=\"3.5\"/><circle cx=\"265\" cy=\"462\" r=\"3.5\"/>\n        <circle cx=\"340\" cy=\"68\" r=\"3.5\"/><circle cx=\"340\" cy=\"232\" r=\"3.5\"/><circle cx=\"340\" cy=\"610\" r=\"3.5\"/>\n        <circle cx=\"390\" cy=\"68\" r=\"3.5\"/><circle cx=\"390\" cy=\"148\" r=\"3.5\"/><circle cx=\"390\" cy=\"232\" r=\"3.5\"/><circle cx=\"390\" cy=\"462\" r=\"3.5\"/><circle cx=\"390\" cy=\"690\" r=\"3.5\"/>\n        <circle cx=\"448\" cy=\"148\" r=\"3.5\"/><circle cx=\"448\" cy=\"232\" r=\"3.5\"/><circle cx=\"448\" cy=\"392\" r=\"3.5\"/><circle cx=\"448\" cy=\"610\" r=\"3.5\"/><circle cx=\"448\" cy=\"930\" r=\"3.5\"/>\n        <circle cx=\"530\" cy=\"392\" r=\"3.5\"/><circle cx=\"530\" cy=\"532\" r=\"3.5\"/><circle cx=\"530\" cy=\"690\" r=\"3.5\"/>\n        <circle cx=\"624\" cy=\"232\" r=\"3.5\"/><circle cx=\"624\" cy=\"392\" r=\"3.5\"/><circle cx=\"624\" cy=\"610\" r=\"3.5\"/>\n        <circle cx=\"700\" cy=\"610\" r=\"3.5\"/><circle cx=\"860\" cy=\"392\" r=\"3.5\"/>\n        <circle cx=\"1585\" cy=\"82\" r=\"3.5\"/><circle cx=\"1585\" cy=\"708\" r=\"3.5\"/><circle cx=\"1585\" cy=\"828\" r=\"3.5\"/>\n        <circle cx=\"1650\" cy=\"82\" r=\"3.5\"/><circle cx=\"1650\" cy=\"202\" r=\"3.5\"/><circle cx=\"1650\" cy=\"262\" r=\"3.5\"/><circle cx=\"1650\" cy=\"708\" r=\"3.5\"/><circle cx=\"1650\" cy=\"888\" r=\"3.5\"/>\n        <circle cx=\"1790\" cy=\"82\" r=\"3.5\"/><circle cx=\"1790\" cy=\"142\" r=\"3.5\"/><circle cx=\"1790\" cy=\"202\" r=\"3.5\"/><circle cx=\"1790\" cy=\"262\" r=\"3.5\"/><circle cx=\"1790\" cy=\"708\" r=\"3.5\"/>\n        <circle cx=\"1862\" cy=\"82\" r=\"3.5\"/><circle cx=\"1862\" cy=\"142\" r=\"3.5\"/><circle cx=\"1862\" cy=\"708\" r=\"3.5\"/>\n        <circle cx=\"1775\" cy=\"708\" r=\"3.5\"/><circle cx=\"1775\" cy=\"828\" r=\"3.5\"/>\n      </g>\n      <rect x=\"62\" y=\"232\" width=\"90\" height=\"310\" rx=\"4\" fill=\"rgba(0,148,206,0.07)\" stroke=\"rgba(0,148,206,0.30)\" stroke-width=\"1.5\"/>\n      <g stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1.5\" fill=\"rgba(0,148,206,0.5)\">\n        <line x1=\"46\" y1=\"272\" x2=\"62\" y2=\"272\"/><circle cx=\"46\" cy=\"272\" r=\"2.5\"/>\n        <line x1=\"46\" y1=\"312\" x2=\"62\" y2=\"312\"/><circle cx=\"46\" cy=\"312\" r=\"2.5\"/>\n        <line x1=\"46\" y1=\"352\" x2=\"62\" y2=\"352\"/><circle cx=\"46\" cy=\"352\" r=\"2.5\"/>\n        <line x1=\"46\" y1=\"392\" x2=\"62\" y2=\"392\"/><circle cx=\"46\" cy=\"392\" r=\"2.5\"/>\n        <line x1=\"46\" y1=\"432\" x2=\"62\" y2=\"432\"/><circle cx=\"46\" cy=\"432\" r=\"2.5\"/>\n        <line x1=\"46\" y1=\"472\" x2=\"62\" y2=\"472\"/><circle cx=\"46\" cy=\"472\" r=\"2.5\"/>\n        <line x1=\"46\" y1=\"512\" x2=\"62\" y2=\"512\"/><circle cx=\"46\" cy=\"512\" r=\"2.5\"/>\n        <line x1=\"152\" y1=\"272\" x2=\"168\" y2=\"272\"/><circle cx=\"168\" cy=\"272\" r=\"2.5\"/>\n        <line x1=\"152\" y1=\"312\" x2=\"168\" y2=\"312\"/><circle cx=\"168\" cy=\"312\" r=\"2.5\"/>\n        <line x1=\"152\" y1=\"352\" x2=\"168\" y2=\"352\"/><circle cx=\"168\" cy=\"352\" r=\"2.5\"/>\n        <line x1=\"152\" y1=\"392\" x2=\"168\" y2=\"392\"/><circle cx=\"168\" cy=\"392\" r=\"2.5\"/>\n        <line x1=\"152\" y1=\"432\" x2=\"168\" y2=\"432\"/><circle cx=\"168\" cy=\"432\" r=\"2.5\"/>\n        <line x1=\"152\" y1=\"472\" x2=\"168\" y2=\"472\"/><circle cx=\"168\" cy=\"472\" r=\"2.5\"/>\n        <line x1=\"152\" y1=\"512\" x2=\"168\" y2=\"512\"/><circle cx=\"168\" cy=\"512\" r=\"2.5\"/>\n      </g>\n      <text x=\"107\" y=\"382\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.50)\" font-size=\"11\" font-family=\"monospace\" font-weight=\"bold\">MCU</text>\n      <text x=\"107\" y=\"397\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.32)\" font-size=\"8\" font-family=\"monospace\">STM32F4</text>\n      <text x=\"107\" y=\"409\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.22)\" font-size=\"7\" font-family=\"monospace\">U1</text>\n      <rect x=\"1790\" y=\"82\" width=\"72\" height=\"160\" rx=\"3\" fill=\"rgba(0,148,206,0.07)\" stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1.5\"/>\n      <g stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1.5\" fill=\"rgba(0,148,206,0.5)\">\n        <line x1=\"1774\" y1=\"108\" x2=\"1790\" y2=\"108\"/><circle cx=\"1774\" cy=\"108\" r=\"2.5\"/>\n        <line x1=\"1774\" y1=\"142\" x2=\"1790\" y2=\"142\"/><circle cx=\"1774\" cy=\"142\" r=\"2.5\"/>\n        <line x1=\"1774\" y1=\"176\" x2=\"1790\" y2=\"176\"/><circle cx=\"1774\" cy=\"176\" r=\"2.5\"/>\n        <line x1=\"1774\" y1=\"210\" x2=\"1790\" y2=\"210\"/><circle cx=\"1774\" cy=\"210\" r=\"2.5\"/>\n        <line x1=\"1862\" y1=\"108\" x2=\"1878\" y2=\"108\"/><circle cx=\"1878\" cy=\"108\" r=\"2.5\"/>\n        <line x1=\"1862\" y1=\"142\" x2=\"1878\" y2=\"142\"/><circle cx=\"1878\" cy=\"142\" r=\"2.5\"/>\n        <line x1=\"1862\" y1=\"202\" x2=\"1878\" y2=\"202\"/><circle cx=\"1878\" cy=\"202\" r=\"2.5\"/>\n      </g>\n      <text x=\"1826\" y=\"158\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.48)\" font-size=\"9\" font-family=\"monospace\" font-weight=\"bold\">SENSOR</text>\n      <text x=\"1826\" y=\"172\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.30)\" font-size=\"8\" font-family=\"monospace\">SHT40</text>\n      <text x=\"1826\" y=\"184\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.22)\" font-size=\"7\" font-family=\"monospace\">U3</text>\n      <rect x=\"42\" y=\"640\" width=\"65\" height=\"82\" rx=\"3\" fill=\"rgba(0,148,206,0.07)\" stroke=\"rgba(0,148,206,0.26)\" stroke-width=\"1.5\"/>\n      <g stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1.5\" fill=\"rgba(0,148,206,0.5)\">\n        <line x1=\"26\" y1=\"660\" x2=\"42\" y2=\"660\"/><circle cx=\"26\" cy=\"660\" r=\"2.5\"/>\n        <line x1=\"26\" y1=\"702\" x2=\"42\" y2=\"702\"/><circle cx=\"26\" cy=\"702\" r=\"2.5\"/>\n        <line x1=\"107\" y1=\"660\" x2=\"124\" y2=\"660\"/><circle cx=\"124\" cy=\"660\" r=\"2.5\"/>\n        <line x1=\"107\" y1=\"702\" x2=\"124\" y2=\"702\"/><circle cx=\"124\" cy=\"702\" r=\"2.5\"/>\n      </g>\n      <text x=\"74\" y=\"679\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.45)\" font-size=\"9\" font-family=\"monospace\">PWR</text>\n      <text x=\"74\" y=\"692\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.25)\" font-size=\"7\" font-family=\"monospace\">LM317</text>\n      <rect x=\"1665\" y=\"708\" width=\"110\" height=\"80\" rx=\"3\" fill=\"rgba(0,148,206,0.07)\" stroke=\"rgba(0,148,206,0.26)\" stroke-width=\"1.5\"/>\n      <g stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1.5\" fill=\"rgba(0,148,206,0.5)\">\n        <line x1=\"1649\" y1=\"728\" x2=\"1665\" y2=\"728\"/><circle cx=\"1649\" cy=\"728\" r=\"2.5\"/>\n        <line x1=\"1649\" y1=\"768\" x2=\"1665\" y2=\"768\"/><circle cx=\"1649\" cy=\"768\" r=\"2.5\"/>\n        <line x1=\"1775\" y1=\"728\" x2=\"1791\" y2=\"728\"/><circle cx=\"1791\" cy=\"728\" r=\"2.5\"/>\n        <line x1=\"1775\" y1=\"768\" x2=\"1791\" y2=\"768\"/><circle cx=\"1791\" cy=\"768\" r=\"2.5\"/>\n      </g>\n      <text x=\"1720\" y=\"746\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.45)\" font-size=\"9\" font-family=\"monospace\">CAN BUS</text>\n      <text x=\"1720\" y=\"759\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.25)\" font-size=\"7\" font-family=\"monospace\">MCP2515</text>\n      <rect x=\"288\" y=\"42\" width=\"64\" height=\"30\" rx=\"8\" fill=\"rgba(0,148,206,0.07)\" stroke=\"rgba(0,148,206,0.26)\" stroke-width=\"1.5\"/>\n      <line x1=\"272\" y1=\"57\" x2=\"288\" y2=\"57\" stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1.5\"/>\n      <circle cx=\"272\" cy=\"57\" r=\"2.5\" fill=\"rgba(0,148,206,0.5)\"/>\n      <line x1=\"352\" y1=\"57\" x2=\"368\" y2=\"57\" stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1.5\"/>\n      <circle cx=\"368\" cy=\"57\" r=\"2.5\" fill=\"rgba(0,148,206,0.5)\"/>\n      <text x=\"320\" y=\"62\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.45)\" font-size=\"9\" font-family=\"monospace\">8MHz</text>\n      <rect x=\"458\" y=\"242\" width=\"58\" height=\"38\" rx=\"3\" fill=\"rgba(0,148,206,0.07)\" stroke=\"rgba(0,148,206,0.26)\" stroke-width=\"1.5\"/>\n      <g stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1.5\" fill=\"rgba(0,148,206,0.5)\">\n        <line x1=\"442\" y1=\"254\" x2=\"458\" y2=\"254\"/><circle cx=\"442\" cy=\"254\" r=\"2.5\"/>\n        <line x1=\"442\" y1=\"268\" x2=\"458\" y2=\"268\"/><circle cx=\"442\" cy=\"268\" r=\"2.5\"/>\n        <line x1=\"516\" y1=\"254\" x2=\"532\" y2=\"254\"/><circle cx=\"532\" cy=\"254\" r=\"2.5\"/>\n        <line x1=\"516\" y1=\"268\" x2=\"532\" y2=\"268\"/><circle cx=\"532\" cy=\"268\" r=\"2.5\"/>\n      </g>\n      <text x=\"487\" y=\"265\" text-anchor=\"middle\" fill=\"rgba(0,148,206,0.40)\" font-size=\"8\" font-family=\"monospace\">FLASH</text>\n      <g fill=\"none\" stroke=\"rgba(0,148,206,0.18)\" stroke-width=\"1.5\">\n        <circle cx=\"40\" cy=\"40\" r=\"10\"/><circle cx=\"1880\" cy=\"40\" r=\"10\"/>\n        <circle cx=\"40\" cy=\"1040\" r=\"10\"/><circle cx=\"1880\" cy=\"1040\" r=\"10\"/>\n      </g>\n      <g fill=\"rgba(0,148,206,0.15)\" stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1\">\n        <circle cx=\"40\" cy=\"40\" r=\"4.5\"/><circle cx=\"1880\" cy=\"40\" r=\"4.5\"/>\n        <circle cx=\"40\" cy=\"1040\" r=\"4.5\"/><circle cx=\"1880\" cy=\"1040\" r=\"4.5\"/>\n      </g>\n      <rect x=\"312\" y=\"64\" width=\"14\" height=\"7\" rx=\"1\" fill=\"rgba(0,148,206,0.14)\" stroke=\"rgba(0,148,206,0.32)\" stroke-width=\"1\"/>\n      <rect x=\"424\" y=\"145\" width=\"14\" height=\"7\" rx=\"1\" fill=\"rgba(0,148,206,0.14)\" stroke=\"rgba(0,148,206,0.32)\" stroke-width=\"1\"/>\n      <rect x=\"325\" y=\"389\" width=\"14\" height=\"7\" rx=\"1\" fill=\"rgba(0,148,206,0.14)\" stroke=\"rgba(0,148,206,0.32)\" stroke-width=\"1\"/>\n      <rect x=\"114\" y=\"847\" width=\"14\" height=\"7\" rx=\"1\" fill=\"rgba(0,148,206,0.14)\" stroke=\"rgba(0,148,206,0.32)\" stroke-width=\"1\"/>\n      <rect x=\"1736\" y=\"705\" width=\"14\" height=\"7\" rx=\"1\" fill=\"rgba(0,148,206,0.14)\" stroke=\"rgba(0,148,206,0.32)\" stroke-width=\"1\"/>\n      <line x1=\"534\" y1=\"380\" x2=\"534\" y2=\"396\" stroke=\"rgba(0,148,206,0.40)\" stroke-width=\"2\"/>\n      <line x1=\"540\" y1=\"380\" x2=\"540\" y2=\"396\" stroke=\"rgba(0,148,206,0.40)\" stroke-width=\"2\"/>\n      <line x1=\"528\" y1=\"388\" x2=\"534\" y2=\"388\" stroke=\"rgba(0,148,206,0.24)\" stroke-width=\"1.5\"/>\n      <line x1=\"540\" y1=\"388\" x2=\"546\" y2=\"388\" stroke=\"rgba(0,148,206,0.24)\" stroke-width=\"1.5\"/>\n      <text x=\"312\" y=\"60\" fill=\"rgba(0,148,206,0.24)\" font-size=\"7\" font-family=\"monospace\">R1</text>\n      <text x=\"424\" y=\"141\" fill=\"rgba(0,148,206,0.24)\" font-size=\"7\" font-family=\"monospace\">R2</text>\n      <text x=\"325\" y=\"385\" fill=\"rgba(0,148,206,0.24)\" font-size=\"7\" font-family=\"monospace\">R3</text>\n      <text x=\"540\" y=\"376\" fill=\"rgba(0,148,206,0.24)\" font-size=\"7\" font-family=\"monospace\">C1</text>\n      <rect x=\"1900\" y=\"588\" width=\"20\" height=\"222\" rx=\"2\" fill=\"rgba(0,148,206,0.07)\" stroke=\"rgba(0,148,206,0.22)\" stroke-width=\"1.5\"/>\n      <g stroke=\"rgba(0,148,206,0.28)\" stroke-width=\"1.5\" fill=\"rgba(0,148,206,0.4)\">\n        <line x1=\"1884\" y1=\"608\" x2=\"1900\" y2=\"608\"/><circle cx=\"1884\" cy=\"608\" r=\"2\"/>\n        <line x1=\"1884\" y1=\"628\" x2=\"1900\" y2=\"628\"/><circle cx=\"1884\" cy=\"628\" r=\"2\"/>\n        <line x1=\"1884\" y1=\"648\" x2=\"1900\" y2=\"648\"/><circle cx=\"1884\" cy=\"648\" r=\"2\"/>\n        <line x1=\"1884\" y1=\"668\" x2=\"1900\" y2=\"668\"/><circle cx=\"1884\" cy=\"668\" r=\"2\"/>\n        <line x1=\"1884\" y1=\"688\" x2=\"1900\" y2=\"688\"/><circle cx=\"1884\" cy=\"688\" r=\"2\"/>\n        <line x1=\"1884\" y1=\"708\" x2=\"1900\" y2=\"708\"/><circle cx=\"1884\" cy=\"708\" r=\"2\"/>\n        <line x1=\"1884\" y1=\"728\" x2=\"1900\" y2=\"728\"/><circle cx=\"1884\" cy=\"728\" r=\"2\"/>\n        <line x1=\"1884\" y1=\"768\" x2=\"1900\" y2=\"768\"/><circle cx=\"1884\" cy=\"768\" r=\"2\"/>\n        <line x1=\"1884\" y1=\"788\" x2=\"1900\" y2=\"788\"/><circle cx=\"1884\" cy=\"788\" r=\"2\"/>\n      </g>\n    </svg>\n  </div>\n\n  <!-- Login Card -->\n  <div style=\"position:relative;z-index:1;display:flex;width:100%;max-width:820px;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.5),0 24px 80px rgba(0,0,0,0.45);\">\n\n    <!-- LEFT: Brand Panel -->\n    <div style=\"flex:1;background:#005a8e;padding:40px 36px;display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;min-width:240px;\">\n      <div style=\"position:absolute;width:320px;height:320px;border-radius:50%;border:1.5px solid rgba(255,255,255,0.10);top:-80px;right:-80px;pointer-events:none;\"></div>\n      <div style=\"position:absolute;width:200px;height:200px;border-radius:50%;background:rgba(255,255,255,0.04);bottom:-40px;left:-40px;pointer-events:none;\"></div>\n\n      <div style=\"position:relative;z-index:1;display:flex;align-items:center;gap:10px;\">\n        <div style=\"width:40px;height:40px;background:rgba(255,255,255,0.15);border-radius:10px;display:flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,0.25);flex-shrink:0;\">\n          <svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\">\n            <path d=\"M12 3C7.03 3 3 7.03 3 12c0 2.39.88 4.57 2.33 6.25\" stroke=\"rgba(255,255,255,0.85)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>\n            <path d=\"M12 3c4.97 0 9 4.03 9 9 0 2.39-.88 4.57-2.33 6.25\" stroke=\"rgba(255,255,255,0.85)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>\n            <circle cx=\"12\" cy=\"12\" r=\"1.5\" fill=\"white\"/>\n            <line x1=\"12\" y1=\"12\" x2=\"8\" y2=\"8\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\"/>\n            <path d=\"M7 17h10\" stroke=\"rgba(255,255,255,0.4)\" stroke-width=\"1.2\" stroke-linecap=\"round\"/>\n            <circle cx=\"7.5\" cy=\"12\" r=\"0.8\" fill=\"rgba(255,255,255,0.45)\"/>\n            <circle cx=\"16.5\" cy=\"12\" r=\"0.8\" fill=\"rgba(255,255,255,0.45)\"/>\n            <circle cx=\"12\" cy=\"7\" r=\"0.8\" fill=\"rgba(255,255,255,0.45)\"/>\n          </svg>\n        </div>\n        <div>\n          <div style=\"font-size:20px;font-weight:800;color:#fff;letter-spacing:-0.2px;\">Jetpace</div>\n          <div style=\"font-size:10px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.12em;margin-top:1px;\">Monitoring System</div>\n        </div>\n      </div>\n\n      <div style=\"position:relative;z-index:1;flex:1;display:flex;align-items:center;justify-content:center;padding:40px 0;\">\n        <div style=\"font-size:46px;font-weight:800;color:#fff;letter-spacing:-1.5px;opacity:0.92;\">Welcome</div>\n      </div>\n\n      <div style=\"height:40px;position:relative;z-index:1;\"></div>\n    </div>\n\n    <!-- RIGHT: Form Panel -->\n    <div style=\"flex:1.1;background:#fff;padding:44px 40px;display:flex;flex-direction:column;justify-content:center;\">\n\n      <div style=\"margin-bottom:28px;\">\n        <div style=\"font-size:22px;font-weight:800;color:#1a1a2e;letter-spacing:-0.3px;\">Sign in to Dashboard</div>\n        <div style=\"font-size:13px;color:#9ca3af;margin-top:5px;\">Enter your credentials to access the system</div>\n      </div>\n\n      <div v-if=\"locked\" style=\"background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:13px 15px;display:flex;align-items:flex-start;gap:10px;margin-bottom:20px;\">\n        <svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" style=\"flex-shrink:0;margin-top:1px;\"><rect x=\"5\" y=\"11\" width=\"14\" height=\"10\" rx=\"2\" stroke=\"#c2410c\" stroke-width=\"1.8\"/><path d=\"M8 11V7a4 4 0 0 1 8 0v4\" stroke=\"#c2410c\" stroke-width=\"1.8\" stroke-linecap=\"round\"/></svg>\n        <div>\n          <div style=\"font-size:13px;font-weight:700;color:#c2410c;\">Account temporarily locked</div>\n          <div style=\"font-size:12px;color:#ea580c;margin-top:2px;\">Too many failed attempts. Try again in <b>{{ countdown }}s</b>.</div>\n        </div>\n      </div>\n\n      <div v-else style=\"display:flex;flex-direction:column;gap:16px;\">\n        <div>\n          <label style=\"display:block;font-size:11px;font-weight:700;color:#4b5563;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:7px;\">User ID</label>\n          <div style=\"position:relative;\">\n            <span style=\"position:absolute;left:13px;top:50%;transform:translateY(-50%);display:flex;align-items:center;pointer-events:none;\">\n              <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><circle cx=\"12\" cy=\"8\" r=\"4\" stroke=\"#9ca3af\" stroke-width=\"1.6\"/><path d=\"M4 20c0-4 3.58-7 8-7s8 3 8 7\" stroke=\"#9ca3af\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg>\n            </span>\n            <input v-model=\"userId\" type=\"text\" placeholder=\"Enter your user ID\"\n              style=\"width:100%;box-sizing:border-box;padding:12px 14px 12px 42px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;outline:none;color:#1f2937;background:#f9fafb;transition:all .2s;\"\n              @keyup.enter=\"doLogin\"\n              onfocus=\"this.style.borderColor='#0094CE';this.style.background='#fff';this.style.boxShadow='0 0 0 3px rgba(0,148,206,0.12)';\"\n              onblur=\"this.style.borderColor='#e5e7eb';this.style.background='#f9fafb';this.style.boxShadow='none';\" />\n          </div>\n        </div>\n        <div>\n          <label style=\"display:block;font-size:11px;font-weight:700;color:#4b5563;text-transform:uppercase;letter-spacing:0.07em;margin-bottom:7px;\">Password</label>\n          <div style=\"position:relative;\">\n            <span style=\"position:absolute;left:13px;top:50%;transform:translateY(-50%);display:flex;align-items:center;pointer-events:none;\">\n              <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><rect x=\"5\" y=\"11\" width=\"14\" height=\"10\" rx=\"2\" stroke=\"#9ca3af\" stroke-width=\"1.6\"/><path d=\"M8 11V7a4 4 0 0 1 8 0v4\" stroke=\"#9ca3af\" stroke-width=\"1.6\" stroke-linecap=\"round\"/><circle cx=\"12\" cy=\"16\" r=\"1.2\" fill=\"#9ca3af\"/></svg>\n            </span>\n            <input v-model=\"password\" :type=\"showPass?'text':'password'\" placeholder=\"Enter your password\"\n              style=\"width:100%;box-sizing:border-box;padding:12px 44px 12px 42px;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;outline:none;color:#1f2937;background:#f9fafb;transition:all .2s;\"\n              @keyup.enter=\"doLogin\"\n              onfocus=\"this.style.borderColor='#0094CE';this.style.background='#fff';this.style.boxShadow='0 0 0 3px rgba(0,148,206,0.12)';\"\n              onblur=\"this.style.borderColor='#e5e7eb';this.style.background='#f9fafb';this.style.boxShadow='none';\" />\n            <span @click=\"showPass=!showPass\" style=\"position:absolute;right:13px;top:50%;transform:translateY(-50%);cursor:pointer;display:flex;align-items:center;color:#9ca3af;\">\n              <svg v-if=\"!showPass\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><ellipse cx=\"12\" cy=\"12\" rx=\"8\" ry=\"5\" stroke=\"#9ca3af\" stroke-width=\"1.6\"/><circle cx=\"12\" cy=\"12\" r=\"2.5\" stroke=\"#9ca3af\" stroke-width=\"1.6\"/></svg>\n              <svg v-else width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M3 3l18 18M10.5 10.7A2.5 2.5 0 0013.3 13.5M6.5 6.7C4.6 8 3 10 3 12c0 2 4 7 9 7 1.7 0 3.3-.5 4.6-1.3M9 5.1C9.9 5 10.9 5 12 5c5 0 9 5 9 7 0 1-.7 2.2-1.7 3.3\" stroke=\"#9ca3af\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg>\n            </span>\n          </div>\n        </div>\n        <div v-if=\"errMsg\" style=\"background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:11px 14px;display:flex;align-items:center;gap:9px;\">\n          <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" style=\"flex-shrink:0;\"><circle cx=\"12\" cy=\"12\" r=\"9\" stroke=\"#dc2626\" stroke-width=\"1.6\"/><path d=\"M12 8v4M12 16h.01\" stroke=\"#dc2626\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg>\n          <span style=\"font-size:13px;color:#dc2626;font-weight:500;\">{{ errMsg }}</span>\n        </div>\n      </div>\n\n      <button @click=\"doLogin\"\n        :disabled=\"locked||!userId||!password\"\n        :style=\"{opacity:(locked||!userId||!password)?'0.45':'1',cursor:(locked||!userId||!password)?'not-allowed':'pointer'}\"\n        style=\"width:100%;padding:14px;background:#0094CE;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;letter-spacing:0.2px;margin-top:22px;box-shadow:0 4px 14px rgba(0,148,206,0.38);transition:background .2s,transform .2s;\"\n        onmouseover=\"if(!this.disabled){this.style.background='#007ab5';this.style.transform='translateY(-1px)';}\"\n        onmouseout=\"this.style.background='#0094CE';this.style.transform='none';\">Sign In\n      </button>\n\n      <div style=\"display:flex;align-items:center;justify-content:center;gap:6px;margin-top:18px;\">\n        <svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M12 2L3 6v6c0 5 3.8 9.7 9 11 5.2-1.3 9-6 9-11V6L12 2z\" stroke=\"#9ca3af\" stroke-width=\"1.6\" fill=\"none\"/><path d=\"M9 12l2 2 4-4\" stroke=\"#9ca3af\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>\n        <span style=\"font-size:11px;color:#9ca3af;\">Protected by account lockout after 3 failed attempts</span>\n      </div>\n    </div>\n  </div>\n</div>\n</template>\n\n<script>\nexport default {\n  data() {\n    return { userId:'', password:'', showPass:false, errMsg:'', locked:false, countdown:0, _timer:null };\n  },\n  mounted() {\n    this.send({ payload: { action: 'logout' } });\n  },\n  methods: {\n    doLogin() {\n      if (this.locked || !this.userId || !this.password) return;\n      this.errMsg = '';\n      this.send({ payload: { action: 'login-check', userId: this.userId, password: this.password } });\n    }\n  },\n  watch: {\n    msg(m) {\n      if (!m || !m.payload || m.payload.action !== 'login-result') return;\n      if (m.payload.success) {\n      this.errMsg = '';\n      localStorage.setItem('jp_user', m.payload.userId || this.userId);\n      localStorage.setItem('jp_auth', '1');\n      } else if (m.payload.locked) {\n        this.locked = true;\n        this.countdown = m.payload.secsLeft;\n        this.errMsg = '';\n        clearInterval(this._timer);\n        this._timer = setInterval(() => {\n          this.countdown--;\n          if (this.countdown <= 0) { this.locked = false; clearInterval(this._timer); }\n        }, 1000);\n      } else {\n        this.errMsg = 'Invalid credentials. ' + (m.payload.attemptsLeft || 0) + ' attempt(s) remaining.';\n        this.password = '';\n      }\n    }\n  }\n};\n</script>",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 350,
+        "y": 520,
+        "wires": [
+            [
+                "47c02abe22b9849f"
+            ]
+        ]
+    },
+    {
+        "id": "1a0d67c383948198",
+        "type": "ui-template",
+        "z": "97181efef207d3e8",
+        "group": "6eecc98fee50f850",
+        "page": "",
+        "ui": "",
+        "name": "DP Monitor Table + Edit Modal",
+        "order": 2,
+        "width": "0",
+        "height": "0",
+        "head": "",
+        "format": "<template>\n<div style=\"width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F8FAFC;display:flex;flex-direction:column;min-height:80vh;\" @click=\"handleGlobalClick\">\n\n  <div style=\"display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:54px;background:#0F172A;box-shadow:0 1px 4px rgba(0,0,0,0.25);flex-shrink:0;\">\n    <div style=\"display:flex;align-items:center;gap:10px;\">\n      <svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M12 3C7.03 3 3 7.03 3 12c0 2.39.88 4.57 2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><path d=\"M12 3c4.97 0 9 4.03 9 9 0 2.39-.88 4.57-2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><circle cx=\"12\" cy=\"12\" r=\"1.5\" fill=\"white\"/><line x1=\"12\" y1=\"12\" x2=\"8\" y2=\"8\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\"/><path d=\"M7 17h10\" stroke=\"rgba(255,255,255,0.3)\" stroke-width=\"1.2\" stroke-linecap=\"round\"/></svg>\n      <span style=\"font-size:17px;font-weight:800;color:#fff;letter-spacing:-0.3px;\">Jetpace</span>\n      <span style=\"font-size:10px;color:rgba(255,255,255,0.45);background:rgba(255,255,255,0.08);padding:2px 8px;border-radius:10px;font-weight:600;letter-spacing:.04em;\">DP Monitor</span>\n    </div>\n    <div style=\"position:relative;\">\n      <button @click.stop=\"toggleUserMenu\" style=\"display:flex;align-items:center;gap:8px;padding:6px 14px;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;\">\n        <span style=\"display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#3B82F6;border-radius:50%;font-size:11px;font-weight:800;\">{{ (loggedInUser||'U')[0].toUpperCase() }}</span>\n        {{ loggedInUser || 'User' }}\n        <span style=\"font-size:9px;opacity:0.5;\">{{ userMenuOpen ? '▲' : '▼' }}</span>\n      </button>\n      <div v-if=\"userMenuOpen\" @click.stop style=\"position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:9990;min-width:200px;overflow:hidden;\">\n        <div style=\"padding:12px 16px;border-bottom:1px solid #E2E8F0;background:#F8FAFC;\">\n          <div style=\"font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;\">Signed in as</div>\n          <div style=\"font-size:14px;font-weight:700;color:#0F172A;\">{{ loggedInUser || 'User' }}</div>\n        </div>\n        <div @click.stop=\"doLogout\" style=\"padding:11px 16px;cursor:pointer;font-size:13px;color:#EF4444;font-weight:600;display:flex;align-items:center;gap:8px;\" onmouseover=\"this.style.background='#FEF2F2'\" onmouseout=\"this.style.background='#fff'\">\n          <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9\" stroke=\"#EF4444\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Logout\n        </div>\n      </div>\n    </div>\n  </div>\n\n  <!-- FILTER BAR -->\n  <div style=\"display:flex;gap:10px;align-items:center;padding:10px 20px;background:#FFFFFF;border-bottom:1px solid #E2E8F0;flex-wrap:wrap;\">\n    <div style=\"position:relative;\">\n      <button @click.stop=\"toggleDropdown('location')\" style=\"display:flex;align-items:center;gap:8px;padding:7px 13px;background:#F8FAFC;color:#0F172A;border:1px solid #E2E8F0;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;min-width:155px;justify-content:space-between;\">\n        <span>📍 {{ filterLocation || 'All Locations' }}</span><span style=\"font-size:9px;color:#6B7280;\">{{ openDropdown==='location'?'▲':'▼' }}</span>\n      </button>\n      <div v-if=\"openDropdown==='location'\" @click.stop style=\"position:absolute;top:calc(100% + 4px);left:0;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.10);z-index:8000;min-width:180px;overflow:hidden;\">\n        <div @click.stop=\"setFilter('location','')\" :style=\"{background:filterLocation===''?'#E0F2FE':'#FFFFFF',fontWeight:filterLocation===''?'700':'400'}\" style=\"padding:9px 14px;cursor:pointer;font-size:13px;color:#0F172A;border-bottom:1px solid #F8FAFC;\">All Locations</div>\n        <div v-for=\"opt in locationOptions\" :key=\"opt\" @click.stop=\"setFilter('location',opt)\" :style=\"{background:filterLocation===opt?'#E0F2FE':'#FFFFFF',fontWeight:filterLocation===opt?'700':'400'}\" style=\"padding:9px 14px;cursor:pointer;font-size:13px;color:#0F172A;border-bottom:1px solid #F8FAFC;\">{{ opt }}</div>\n        <div v-if=\"locationOptions.length===0\" style=\"padding:9px 14px;font-size:12px;color:#6B7280;\">No options set</div>\n      </div>\n    </div>\n    <div style=\"position:relative;\">\n      <button @click.stop=\"toggleDropdown('room')\" style=\"display:flex;align-items:center;gap:8px;padding:7px 13px;background:#F8FAFC;color:#0F172A;border:1px solid #E2E8F0;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;min-width:155px;justify-content:space-between;\">\n        <span>🚪 {{ filterRoomNo || 'All Rooms' }}</span><span style=\"font-size:9px;color:#6B7280;\">{{ openDropdown==='room'?'▲':'▼' }}</span>\n      </button>\n      <div v-if=\"openDropdown==='room'\" @click.stop style=\"position:absolute;top:calc(100% + 4px);left:0;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.10);z-index:8000;min-width:180px;overflow:hidden;\">\n        <div @click.stop=\"setFilter('room','')\" :style=\"{background:filterRoomNo===''?'#E0F2FE':'#FFFFFF',fontWeight:filterRoomNo===''?'700':'400'}\" style=\"padding:9px 14px;cursor:pointer;font-size:13px;color:#0F172A;border-bottom:1px solid #F8FAFC;\">All Rooms</div>\n        <div v-for=\"opt in roomNoOptions\" :key=\"opt\" @click.stop=\"setFilter('room',opt)\" :style=\"{background:filterRoomNo===opt?'#E0F2FE':'#FFFFFF',fontWeight:filterRoomNo===opt?'700':'400'}\" style=\"padding:9px 14px;cursor:pointer;font-size:13px;color:#0F172A;border-bottom:1px solid #F8FAFC;\">{{ opt }}</div>\n        <div v-if=\"roomNoOptions.length===0\" style=\"padding:9px 14px;font-size:12px;color:#6B7280;\">No options set</div>\n      </div>\n    </div>\n    <button v-if=\"filterLocation||filterRoomNo\" @click=\"clearFilters\" style=\"padding:7px 12px;background:#FEF2F2;color:#EF4444;border:1px solid #FECACA;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;\">✕ Clear</button>\n    <div style=\"flex:1;\"></div>\n    <button @click=\"openManageOptions\" style=\"padding:7px 13px;background:#F1F5F9;color:#475569;border:1px solid #E2E8F0;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;\">⚙ Manage Options</button>\n  </div>\n\n  <!-- ACTIVE IDs BAR -->\n  <div style=\"display:flex;gap:10px;align-items:center;padding:10px 20px;background:#F1F5F9;border-bottom:1px solid #E2E8F0;flex-wrap:wrap;\">\n    <span style=\"font-size:12px;font-weight:700;color:#3B82F6;white-space:nowrap;\">⬡ Active Slave IDs</span>\n    <input v-model=\"idInput\" type=\"text\" placeholder=\"e.g. 1,2,5,10-15,20\"\n      style=\"flex:1;min-width:180px;padding:7px 12px;border:1px solid #CBD5E1;border-radius:7px;font-size:13px;outline:none;color:#0F172A;background:#FFFFFF;\"\n      @keyup.enter=\"applyIds\"\n      onfocus=\"this.style.borderColor='#3B82F6';this.style.boxShadow='0 0 0 2px rgba(59,130,246,0.14)';\"\n      onblur=\"this.style.borderColor='#CBD5E1';this.style.boxShadow='none';\"/>\n    <button @click=\"applyIds\" style=\"padding:7px 18px;background:#3B82F6;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;font-weight:700;\">✓ Apply</button>\n    <span v-if=\"activeLabel\" style=\"font-size:11px;color:#6B7280;\">{{ activeLabel }}</span>\n  </div>\n\n  <!-- SUMMARY BAR -->\n  <div style=\"display:flex;gap:20px;align-items:center;padding:9px 20px;background:#FFFFFF;border-bottom:1px solid #E2E8F0;flex-wrap:wrap;\">\n    <span style=\"font-size:13px;color:#475569;\">Showing: <b style=\"color:#0F172A;\">{{ filteredData.length }}</b> / {{ tableData.length }}</span>\n    <span style=\"display:inline-flex;align-items:center;gap:5px;font-size:13px;\"><span style=\"width:7px;height:7px;border-radius:50%;background:#22C55E;display:inline-block;box-shadow:0 0 4px #22C55E;\"></span><span style=\"color:#475569;\">Online: <b style=\"color:#0F172A;\">{{ filteredOnlineCount }}</b></span></span>\n    <span style=\"display:inline-flex;align-items:center;gap:5px;font-size:13px;\"><span style=\"width:7px;height:7px;border-radius:50%;background:#EF4444;display:inline-block;box-shadow:0 0 4px #EF4444;\"></span><span style=\"color:#475569;\">Alert: <b style=\"color:#0F172A;\">{{ filteredAlertCount }}</b></span></span>\n    <span style=\"display:inline-flex;align-items:center;gap:5px;font-size:13px;\"><span style=\"width:7px;height:7px;border-radius:50%;background:#6B7280;display:inline-block;\"></span><span style=\"color:#475569;\">Offline: <b style=\"color:#0F172A;\">{{ filteredOfflineCount }}</b></span></span>\n    <span v-if=\"filterLocation||filterRoomNo\" style=\"font-size:11px;color:#3B82F6;background:#EFF6FF;padding:2px 9px;border-radius:10px;border:1px solid #BFDBFE;\">{{ [filterLocation,filterRoomNo].filter(Boolean).join(' · ') }}</span>\n  </div>\n\n  <!-- TABLE -->\n  <div style=\"padding:16px 20px;flex:1;\">\n    <div style=\"background:#FFFFFF;border-radius:10px;border:1px solid #E2E8F0;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.04);\">\n      <div style=\"overflow-x:auto;\">\n        <table style=\"width:100%;border-collapse:collapse;font-size:13px;\">\n          <thead>\n            <tr style=\"background:#E2E8F0;\">\n              <th style=\"padding:11px 16px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">ID</th>\n              <th style=\"padding:11px 16px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Location</th>\n              <th style=\"padding:11px 16px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Room No</th>\n              <th style=\"padding:11px 16px;text-align:right;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">DP Value</th>\n              <th style=\"padding:11px 16px;text-align:right;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">LSP</th>\n              <th style=\"padding:11px 16px;text-align:right;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">HSP</th>\n              <th style=\"padding:11px 16px;text-align:center;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Status</th>\n              <th style=\"padding:11px 16px;text-align:center;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Edit</th>\n            </tr>\n          </thead>\n          <tbody>\n            <tr v-for=\"(row,i) in filteredData\" :key=\"row.ID\"\n              :style=\"{background:row.Status==='OFFLINE'?'#F1F5F9':(i%2===0?'#FFFFFF':'#F8FAFC')}\">\n              <td style=\"padding:10px 16px;border-bottom:1px solid #E2E8F0;font-weight:700;\" :style=\"{color:row.Status==='OFFLINE'?'#CBD5E1':'#0F172A'}\" >{{ row.ID }}</td>\n              <td style=\"padding:10px 16px;border-bottom:1px solid #E2E8F0;\" :style=\"{color:row.Status==='OFFLINE'?'#CBD5E1':'#475569'}\">{{ row.Location||'—' }}</td>\n              <td style=\"padding:10px 16px;border-bottom:1px solid #E2E8F0;\" :style=\"{color:row.Status==='OFFLINE'?'#CBD5E1':'#475569'}\">{{ row.RoomNo||'—' }}</td>\n              <td style=\"padding:10px 16px;border-bottom:1px solid #E2E8F0;text-align:right;font-weight:700;\" :style=\"{color:row.Status==='OFFLINE'?'#CBD5E1':'#0F172A'}\">{{ row.DPValue }}</td>\n              <td style=\"padding:10px 16px;border-bottom:1px solid #E2E8F0;text-align:right;\" :style=\"{color:row.Status==='OFFLINE'?'#CBD5E1':'#6B7280'}\">{{ row.LSP }}</td>\n              <td style=\"padding:10px 16px;border-bottom:1px solid #E2E8F0;text-align:right;\" :style=\"{color:row.Status==='OFFLINE'?'#CBD5E1':'#6B7280'}\">{{ row.HSP }}</td>\n              <td style=\"padding:10px 16px;border-bottom:1px solid #E2E8F0;text-align:center;\">\n                <span v-if=\"row.Status==='OFFLINE'\" style=\"display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:#F1F5F9;font-size:11px;font-weight:700;color:#6B7280;\"><span style=\"width:6px;height:6px;border-radius:50%;background:#6B7280;display:inline-block;\"></span>OFFLINE</span>\n                <span v-else-if=\"row.Alarm==='ALERT'\" style=\"display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:#FEF2F2;font-size:11px;font-weight:700;color:#EF4444;border:1px solid #FECACA;\"><span style=\"width:6px;height:6px;border-radius:50%;background:#EF4444;display:inline-block;box-shadow:0 0 5px #EF4444;\"></span>ALERT</span>\n                <span v-else style=\"display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:#F0FDF4;font-size:11px;font-weight:700;color:#22C55E;border:1px solid #BBF7D0;\"><span style=\"width:6px;height:6px;border-radius:50%;background:#22C55E;display:inline-block;box-shadow:0 0 5px #22C55E;\"></span>NORMAL</span>\n              </td>\n              <td style=\"padding:10px 16px;border-bottom:1px solid #E2E8F0;text-align:center;\">\n                <button @click=\"row.Status!=='OFFLINE'&&handleEditClick(row)\" :disabled=\"row.Status==='OFFLINE'\"\n                  :style=\"{background:row.Status==='OFFLINE'?'#F1F5F9':'#EFF6FF',border:'1px solid '+(row.Status==='OFFLINE'?'#E2E8F0':'#BFDBFE'),color:row.Status==='OFFLINE'?'#CBD5E1':'#3B82F6',cursor:row.Status==='OFFLINE'?'not-allowed':'pointer'}\"\n                  style=\"border-radius:6px;padding:4px 12px;font-size:12px;font-weight:600;\">✎ Edit</button>\n              </td>\n            </tr>\n            <tr v-if=\"filteredData.length===0\"><td colspan=\"8\" style=\"padding:32px;text-align:center;color:#6B7280;font-size:13px;\">No devices match the current filter.</td></tr>\n          </tbody>\n        </table>\n      </div>\n    </div>\n  </div>\n\n  <!-- MANAGE OPTIONS MODAL -->\n  <div v-if=\"manageModalOpen\" style=\"position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(15,23,42,0.5);z-index:9995;display:flex;align-items:center;justify-content:center;\" @click.self=\"manageModalOpen=false\">\n    <div style=\"background:#FFFFFF;border-radius:14px;padding:28px 30px;width:95%;max-width:500px;box-shadow:0 20px 60px rgba(0,0,0,0.2);max-height:85vh;overflow-y:auto;border:1px solid #E2E8F0;\">\n      <div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;\">\n        <div><div style=\"font-size:16px;font-weight:700;color:#0F172A;\">⚙ Manage Dropdown Options</div><div style=\"font-size:12px;color:#6B7280;margin-top:3px;\">Set filter choices for locations and rooms</div></div>\n        <button @click=\"manageModalOpen=false\" style=\"background:#F1F5F9;border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;color:#475569;\">✕</button>\n      </div>\n      <div style=\"margin-bottom:20px;\">\n        <div style=\"font-size:11px;font-weight:700;color:#3B82F6;text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;\">📍 Location Options</div>\n        <div v-for=\"(loc,i) in editLocations\" :key=\"'l'+i\" style=\"display:flex;gap:8px;align-items:center;margin-bottom:7px;\">\n          <input v-model=\"editLocations[i]\" type=\"text\" :placeholder=\"'Location '+(i+1)\" style=\"flex:1;padding:8px 11px;border:1px solid #E2E8F0;border-radius:7px;font-size:13px;outline:none;color:#0F172A;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/>\n          <button @click=\"editLocations.splice(i,1)\" style=\"background:#FEF2F2;border:1px solid #FECACA;color:#EF4444;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;\">✕</button>\n        </div>\n        <button @click=\"editLocations.push('')\" style=\"padding:7px 14px;background:#EFF6FF;color:#3B82F6;border:1px dashed #BFDBFE;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700;\">+ Add Location</button>\n      </div>\n      <div style=\"margin-bottom:10px;\">\n        <div style=\"font-size:11px;font-weight:700;color:#3B82F6;text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;\">🚪 Room No Options</div>\n        <div v-for=\"(rn,i) in editRoomNos\" :key=\"'r'+i\" style=\"display:flex;gap:8px;align-items:center;margin-bottom:7px;\">\n          <input v-model=\"editRoomNos[i]\" type=\"text\" :placeholder=\"'Room No '+(i+1)\" style=\"flex:1;padding:8px 11px;border:1px solid #E2E8F0;border-radius:7px;font-size:13px;outline:none;color:#0F172A;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/>\n          <button @click=\"editRoomNos.splice(i,1)\" style=\"background:#FEF2F2;border:1px solid #FECACA;color:#EF4444;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px;font-weight:700;\">✕</button>\n        </div>\n        <button @click=\"editRoomNos.push('')\" style=\"padding:7px 14px;background:#EFF6FF;color:#3B82F6;border:1px dashed #BFDBFE;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700;\">+ Add Room No</button>\n      </div>\n      <div style=\"display:flex;justify-content:flex-end;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid #E2E8F0;\">\n        <button @click=\"manageModalOpen=false\" style=\"padding:9px 20px;border:1px solid #E2E8F0;background:#FFFFFF;border-radius:8px;cursor:pointer;font-size:13px;color:#475569;font-weight:600;\">Cancel</button>\n        <button @click=\"applyManageOptions\" style=\"padding:9px 22px;border:none;background:#3B82F6;color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;\">✓ Apply</button>\n      </div>\n    </div>\n  </div>\n\n  <!-- AUTH MODAL -->\n  <div v-if=\"authModalOpen\" style=\"position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(15,23,42,0.5);z-index:9998;display:flex;align-items:center;justify-content:center;\" @click.self=\"closeAuthModal\">\n    <div style=\"background:#FFFFFF;border-radius:14px;padding:30px 32px;width:92%;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,0.2);border:1px solid #E2E8F0;\">\n      <div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;\">\n        <div><div style=\"font-size:16px;font-weight:700;color:#0F172A;\">🔐 Admin Access Required</div><div style=\"font-size:12px;color:#6B7280;margin-top:3px;\">{{ authPurpose }}</div></div>\n        <button @click=\"closeAuthModal\" style=\"background:#F1F5F9;border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;color:#475569;\">✕</button>\n      </div>\n      <div v-if=\"authLocked\" style=\"background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;padding:11px 14px;margin-bottom:16px;font-size:13px;color:#EA580C;\">🔒 Too many attempts. Try again in <b>{{ lockCountdown }}s</b>.</div>\n      <div v-else style=\"display:flex;flex-direction:column;gap:14px;\">\n        <div><label style=\"display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.06em;\">User ID</label><input v-model=\"authUserId\" type=\"text\" placeholder=\"Enter user ID\" style=\"width:100%;box-sizing:border-box;padding:10px 13px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none;color:#0F172A;\" onfocus=\"this.style.borderColor='#3B82F6';this.style.boxShadow='0 0 0 2px rgba(59,130,246,0.13)';\" onblur=\"this.style.borderColor='#E2E8F0';this.style.boxShadow='none';\" @keyup.enter=\"submitAuth\"/></div>\n        <div><label style=\"display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.06em;\">Password</label><div style=\"position:relative;\"><input v-model=\"authPassword\" :type=\"showPass?'text':'password'\" placeholder=\"Enter password\" style=\"width:100%;box-sizing:border-box;padding:10px 38px 10px 13px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none;color:#0F172A;\" onfocus=\"this.style.borderColor='#3B82F6';this.style.boxShadow='0 0 0 2px rgba(59,130,246,0.13)';\" onblur=\"this.style.borderColor='#E2E8F0';this.style.boxShadow='none';\" @keyup.enter=\"submitAuth\"/><span @click=\"showPass=!showPass\" style=\"position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:14px;color:#6B7280;user-select:none;\">{{ showPass?'🙈':'👁' }}</span></div></div>\n        <div v-if=\"authError\" style=\"background:#FEF2F2;border:1px solid #FECACA;border-radius:7px;padding:9px 12px;font-size:12px;color:#EF4444;\">⚠ {{ authError }}</div>\n      </div>\n      <div style=\"display:flex;justify-content:flex-end;gap:10px;margin-top:22px;padding-top:16px;border-top:1px solid #E2E8F0;\">\n        <button @click=\"closeAuthModal\" style=\"padding:9px 20px;border:1px solid #E2E8F0;background:#FFFFFF;border-radius:8px;cursor:pointer;font-size:13px;color:#475569;font-weight:600;\">Cancel</button>\n        <button @click=\"submitAuth\" :disabled=\"authLocked||!authUserId||!authPassword\" :style=\"{opacity:(authLocked||!authUserId||!authPassword)?'0.4':'1'}\" style=\"padding:9px 22px;border:none;background:#3B82F6;color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;\">🔓 Unlock</button>\n      </div>\n    </div>\n  </div>\n\n  <!-- EDIT MODAL -->\n  <div v-if=\"modalOpen\" style=\"position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(15,23,42,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;\" @click.self=\"closeModal\">\n    <div style=\"background:#FFFFFF;border-radius:14px;padding:28px 30px;width:92%;max-width:400px;box-shadow:0 20px 60px rgba(0,0,0,0.2);border:1px solid #E2E8F0;\">\n      <div style=\"display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;\">\n        <div><div style=\"font-size:15px;font-weight:700;color:#0F172A;\">✎ Edit Device Settings</div><div style=\"font-size:12px;color:#6B7280;margin-top:2px;\">Slave ID: <b style=\"color:#3B82F6;\">{{ editData.ID }}</b></div></div>\n        <button @click=\"closeModal\" style=\"background:#F1F5F9;border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;color:#475569;\">✕</button>\n      </div>\n      <div style=\"display:flex;flex-direction:column;gap:15px;\">\n        <div><label style=\"display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.06em;\">Location</label>\n          <select v-if=\"locationOptions.length>0\" v-model=\"editData.Location\" style=\"width:100%;box-sizing:border-box;padding:10px 13px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none;color:#0F172A;background:#FFFFFF;\"><option value=\"\">— Select Location —</option><option v-for=\"o in locationOptions\" :key=\"o\" :value=\"o\">{{ o }}</option></select>\n          <input v-else v-model=\"editData.Location\" type=\"text\" placeholder=\"e.g. Ground Floor\" style=\"width:100%;box-sizing:border-box;padding:10px 13px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none;color:#0F172A;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/>\n        </div>\n        <div><label style=\"display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.06em;\">Room No</label>\n          <select v-if=\"roomNoOptions.length>0\" v-model=\"editData.RoomNo\" style=\"width:100%;box-sizing:border-box;padding:10px 13px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none;color:#0F172A;background:#FFFFFF;\"><option value=\"\">— Select Room No —</option><option v-for=\"o in roomNoOptions\" :key=\"o\" :value=\"o\">{{ o }}</option></select>\n          <input v-else v-model=\"editData.RoomNo\" type=\"text\" placeholder=\"e.g. 101\" style=\"width:100%;box-sizing:border-box;padding:10px 13px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none;color:#0F172A;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/>\n        </div>\n        <div style=\"display:flex;gap:12px;\">\n          <div style=\"flex:1;\"><label style=\"display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.06em;\">LSP</label><input v-model.number=\"editData.LSP\" type=\"number\" placeholder=\"0\" style=\"width:100%;box-sizing:border-box;padding:10px 13px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none;color:#0F172A;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/></div>\n          <div style=\"flex:1;\"><label style=\"display:block;font-size:11px;font-weight:700;color:#475569;margin-bottom:5px;text-transform:uppercase;letter-spacing:0.06em;\">HSP</label><input v-model.number=\"editData.HSP\" type=\"number\" placeholder=\"0\" style=\"width:100%;box-sizing:border-box;padding:10px 13px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none;color:#0F172A;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/></div>\n        </div>\n        <p v-if=\"editData.LSP>=editData.HSP\" style=\"margin:0;color:#EF4444;font-size:12px;background:#FEF2F2;padding:8px 11px;border-radius:7px;border-left:3px solid #EF4444;\">⚠ LSP must be less than HSP</p>\n      </div>\n      <div style=\"display:flex;justify-content:flex-end;gap:10px;margin-top:22px;padding-top:16px;border-top:1px solid #E2E8F0;\">\n        <button @click=\"closeModal\" style=\"padding:9px 20px;border:1px solid #E2E8F0;background:#FFFFFF;border-radius:8px;cursor:pointer;font-size:13px;color:#475569;font-weight:600;\">Cancel</button>\n        <button @click=\"saveSettings\" :disabled=\"editData.LSP>=editData.HSP\" :style=\"{opacity:editData.LSP>=editData.HSP?'0.4':'1'}\" style=\"padding:9px 20px;border:none;background:#3B82F6;color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;\">✓ Save</button>\n      </div>\n    </div>\n  </div>\n\n</div>\n<script>\n  (function () {\n  var PAGES = [\n    { label: 'DP Monitor',    path: '/dashboard/page2'      },\n    { label: 'Performance',   path: '/dashboard/performance' },\n    { label: 'Daily Reports', path: '/dashboard/reports'     },\n  ];\n\n  function getCurrentTab() {\n    var p = window.location.pathname;\n    var best = null, bestLen = 0;\n    for (var i = 0; i < PAGES.length; i++) {\n      var pg = PAGES[i];\n      if (p.startsWith(pg.path) && pg.path.length > bestLen) {\n        best = pg; bestLen = pg.path.length;\n      }\n    }\n    return best;\n  }\n\n  function updateActiveTab() {\n    var current = getCurrentTab();\n    document.querySelectorAll('.jp-nav-tab').forEach(function(tab) {\n      tab.classList.toggle('jp-active', !!(current && tab.dataset.path === current.path));\n    });\n  }\n\n  function navigate(path) {\n    if (window.location.pathname === path) return;\n    var content = document.querySelector('.nrdb-ui-page') || document.body;\n    content.style.transition = 'opacity 0.12s ease';\n    content.style.opacity = '0';\n    setTimeout(function() {\n      history.pushState({}, '', path);\n      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));\n      updateActiveTab();\n      setTimeout(function() { content.style.opacity = '1'; }, 80);\n    }, 120);\n  }\n\n  function injectNav() {\n    if (document.getElementById('jetpace-topnav')) {\n      updateActiveTab();\n      return;\n    }\n\n    var current = getCurrentTab();\n    var nav = document.createElement('div');\n    nav.id = 'jetpace-topnav';\n\n    nav.innerHTML =\n      '<div class=\"jp-brand\">' +\n        '<div class=\"jp-brand-logo\">' +\n          '<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\">' +\n            '<path d=\"M12 3C7.03 3 3 7.03 3 12c0 2.39.88 4.57 2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>' +\n            '<path d=\"M12 3c4.97 0 9 4.03 9 9 0 2.39-.88 4.57-2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>' +\n            '<circle cx=\"12\" cy=\"12\" r=\"1.5\" fill=\"white\"/>' +\n            '<line x1=\"12\" y1=\"12\" x2=\"8\" y2=\"8\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\"/>' +\n          '</svg>' +\n        '</div>' +\n        '<span class=\"jp-brand-name\">Jetpace</span>' +\n      '</div>' +\n      '<div class=\"jp-nav-pills\">' +\n        PAGES.map(function(pg) {\n          var isActive = current && current.path === pg.path;\n          return '<button class=\"jp-nav-tab' + (isActive ? ' jp-active' : '') + '\" data-path=\"' + pg.path + '\">' + pg.label + '</button>';\n        }).join('') +\n      '</div>' +\n      '<div class=\"jp-spacer\"></div>';\n\n    nav.querySelectorAll('.jp-nav-tab').forEach(function(btn) {\n      btn.addEventListener('click', function() { navigate(btn.dataset.path); });\n    });\n\n    document.body.prepend(nav);\n  }\n\n  var _pushState = history.pushState.bind(history);\n  history.pushState = function() {\n    _pushState.apply(history, arguments);\n    setTimeout(updateActiveTab, 80);\n  };\n  window.addEventListener('popstate', function() { setTimeout(updateActiveTab, 80); });\n\n  function tryInject() {\n    if (document.body) { injectNav(); }\n    else { setTimeout(tryInject, 50); }\n  }\n  tryInject();\n  setTimeout(injectNav, 500);\n  setTimeout(injectNav, 1500);\n})();\n</script>\n</template>\n\n<script>\nexport default {\n  data() {\n    return {\n      tableData:[],filterLocation:'',filterRoomNo:'',openDropdown:null,locationOptions:[],roomNoOptions:[],\n      manageModalOpen:false,editLocations:[],editRoomNos:[],\n      modalOpen:false,editData:{ID:null,Location:'',RoomNo:'',LSP:0,HSP:0},pendingRow:null,\n      idInput:'',activeLabel:'',\n      authModalOpen:false,authPurpose:'',authUserId:'',authPassword:'',authError:'',authLocked:false,lockCountdown:0,showPass:false,_authCallback:null,_lockTimer:null,\n      loggedInUser:'',userMenuOpen:false\n    };\n  },\n  mounted() {\n    this.send({payload:{action:'session-check'}});\n    this.send({payload:{action:'load-options'}});\n  },\n  computed: {\n    filteredData() { return this.tableData.filter(r=>(!this.filterLocation||r.Location===this.filterLocation)&&(!this.filterRoomNo||r.RoomNo===this.filterRoomNo)); },\n    filteredOnlineCount()  { return this.filteredData.filter(r=>r.Status==='ONLINE'&&r.Alarm!=='ALERT').length; },\n    filteredAlertCount()   { return this.filteredData.filter(r=>r.Status==='ONLINE'&&r.Alarm==='ALERT').length; },\n    filteredOfflineCount() { return this.filteredData.filter(r=>r.Status==='OFFLINE').length; }\n  },\n  methods: {\n    handleGlobalClick() { this.userMenuOpen=false; this.openDropdown=null; },\n    toggleUserMenu(e) { e.stopPropagation(); this.userMenuOpen=!this.userMenuOpen; this.openDropdown=null; },\n    doLogout() { this.userMenuOpen=false; this.send({payload:{action:'do-logout'}}); },\n    toggleDropdown(n){ this.openDropdown=this.openDropdown===n?null:n; this.userMenuOpen=false; },\n    setFilter(t,v){if(t==='location')this.filterLocation=v;else this.filterRoomNo=v;this.openDropdown=null;},\n    clearFilters(){this.filterLocation='';this.filterRoomNo='';},\n    openManageOptions(){this._authCallback='manage';this.authPurpose='Enter credentials to manage dropdown options';this.authUserId='';this.authPassword='';this.authError='';this.authLocked=false;this.showPass=false;this.authModalOpen=true;},\n    applyManageOptions(){\n      this.locationOptions=this.editLocations.map(s=>s.trim()).filter(Boolean);\n      this.roomNoOptions=this.editRoomNos.map(s=>s.trim()).filter(Boolean);\n      this.send({payload:{action:'save-options',locations:this.locationOptions,rooms:this.roomNoOptions}});\n      if(!this.locationOptions.includes(this.filterLocation))this.filterLocation='';\n      if(!this.roomNoOptions.includes(this.filterRoomNo))this.filterRoomNo='';\n      this.manageModalOpen=false;\n    },\n    applyIds(){if(!this.idInput.trim())return;this.send({payload:{action:'set-active-ids',raw:this.idInput}});let c=0;this.idInput.split(',').forEach(p=>{p=p.trim();const r=p.match(/^(\\d+)-(\\d+)$/);if(r)c+=Math.max(0,parseInt(r[2])-parseInt(r[1])+1);else if(/^\\d+$/.test(p))c++;});this.activeLabel=c+' ID(s) queued for polling';},\n    handleEditClick(row){this.pendingRow=row;this._authCallback='edit';this.authPurpose='Enter credentials to edit device settings';this.authUserId='';this.authPassword='';this.authError='';this.authLocked=false;this.showPass=false;this.authModalOpen=true;},\n    closeAuthModal(){this.authModalOpen=false;this.pendingRow=null;this._authCallback=null;clearInterval(this._lockTimer);},\n    submitAuth(){if(this.authLocked||!this.authUserId||!this.authPassword)return;this.send({payload:{action:'auth-check',userId:this.authUserId,password:this.authPassword}});},\n    handleAuthResult(r){if(r.success){this.authModalOpen=false;if(this._authCallback==='edit'&&this.pendingRow){this.openModal(this.pendingRow);this.pendingRow=null;}else if(this._authCallback==='manage'){this.editLocations=[...this.locationOptions];this.editRoomNos=[...this.roomNoOptions];this.manageModalOpen=true;}this._authCallback=null;}else if(r.locked){this.authLocked=true;this.lockCountdown=r.secsLeft;this.authError='';clearInterval(this._lockTimer);this._lockTimer=setInterval(()=>{this.lockCountdown--;if(this.lockCountdown<=0){this.authLocked=false;clearInterval(this._lockTimer);}},1000);}else{const l=r.attemptsLeft||0;this.authError='Invalid credentials. '+l+' attempt'+(l===1?'':'s')+' remaining.';this.authPassword='';}},\n    openModal(row){this.editData={ID:row.ID,Location:row.Location||'',RoomNo:row.RoomNo||'',LSP:row.LSP!=null?row.LSP:0,HSP:row.HSP!=null?row.HSP:0};this.modalOpen=true;},\n    closeModal(){this.modalOpen=false;},\n    saveSettings(){if(this.editData.LSP>=this.editData.HSP)return;this.send({payload:{action:'device-settings-save',id:this.editData.ID,location:this.editData.Location,roomNo:this.editData.RoomNo,lsp:this.editData.LSP,hsp:this.editData.HSP}});this.modalOpen=false;}\n  },\n  watch:{\n    msg(m){\n      if(!m||!m.payload)return;\n      if(m.payload.action==='session-result'){\n      if(!m.payload.authenticated){\n      // Check localStorage before redirecting\n      const localAuth = localStorage.getItem('jp_auth');\n      const localUser = localStorage.getItem('jp_user');\n      if(localAuth === '1' && localUser) {\n      this.loggedInUser = localUser;\n      return; // Stay on page, trust local session\n      }\n      window.location.href='/dashboard/login';\n      return;\n      }\n      if(m.payload.userId){\n      this.loggedInUser=m.payload.userId;\n      localStorage.setItem('jp_user', m.payload.userId);\n      localStorage.setItem('jp_auth','1');\n      }\n      return;\n      }\n      if(m.payload.action==='auth-result'){this.handleAuthResult(m.payload);return;}\n      if(m.payload.action==='load-options'){this.locationOptions=m.payload.locations||[];this.roomNoOptions=m.payload.rooms||[];return;}\n      if(m.payload.action==='navigate-login'){\n      localStorage.removeItem('jp_auth');\n      localStorage.removeItem('jp_user');\n      window.location.href='/dashboard/login';\n      return;\n      }\n      if(Array.isArray(m.payload)&&m.payload.length>0){this.tableData=m.payload;}\n    }\n  }\n};\n</script>",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 930,
+        "y": 300,
+        "wires": [
+            [
+                "ca875a7eba52503b"
+            ]
+        ]
+    },
+    {
+        "id": "a4e429b74fa5232c",
+        "type": "ui-template",
+        "z": "97181efef207d3e8",
+        "group": "a1b2c3d4e5f60002",
+        "page": "",
+        "ui": "",
+        "name": "Performance Chart Page",
+        "order": 2,
+        "width": "0",
+        "height": "0",
+        "head": "",
+        "format": "<template>\n<div style=\"width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F8FAFC;display:flex;flex-direction:column;min-height:80vh;\" @click=\"handleGlobalClick\">\n\n  <style>\n    @keyframes livepulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.4;transform:scale(1.7);}}\n    .liveblip{animation:livepulse 1s ease-in-out infinite;display:inline-block;width:8px;height:8px;border-radius:50%;background:#22C55E;flex-shrink:0;}\n  </style>\n\n\n  <div style=\"display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:54px;background:#0F172A;box-shadow:0 1px 4px rgba(0,0,0,0.25);flex-shrink:0;\">\n    <div style=\"display:flex;align-items:center;gap:10px;\">\n      <svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M12 3C7.03 3 3 7.03 3 12c0 2.39.88 4.57 2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><path d=\"M12 3c4.97 0 9 4.03 9 9 0 2.39-.88 4.57-2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><circle cx=\"12\" cy=\"12\" r=\"1.5\" fill=\"white\"/><line x1=\"12\" y1=\"12\" x2=\"8\" y2=\"8\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\"/><path d=\"M7 17h10\" stroke=\"rgba(255,255,255,0.3)\" stroke-width=\"1.2\" stroke-linecap=\"round\"/></svg>\n      <span style=\"font-size:17px;font-weight:800;color:#fff;letter-spacing:-0.3px;\">Jetpace</span>\n      <span style=\"font-size:10px;color:rgba(255,255,255,0.45);background:rgba(255,255,255,0.08);padding:2px 8px;border-radius:10px;font-weight:600;letter-spacing:.04em;\">Performance Chart</span>\n    </div>\n    <div style=\"position:relative;\">\n      <button @click.stop=\"toggleUserMenu\" style=\"display:flex;align-items:center;gap:8px;padding:6px 14px;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;\">\n        <span style=\"display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#3B82F6;border-radius:50%;font-size:11px;font-weight:800;\">{{ (loggedInUser||'U')[0].toUpperCase() }}</span>\n        {{ loggedInUser || 'User' }}\n        <span style=\"font-size:9px;opacity:0.5;\">{{ userMenuOpen ? '▲' : '▼' }}</span>\n      </button>\n      <div v-if=\"userMenuOpen\" @click.stop style=\"position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:9990;min-width:200px;overflow:hidden;\">\n        <div style=\"padding:12px 16px;border-bottom:1px solid #E2E8F0;background:#F8FAFC;\">\n          <div style=\"font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;\">Signed in as</div>\n          <div style=\"font-size:14px;font-weight:700;color:#0F172A;\">{{ loggedInUser || 'User' }}</div>\n        </div>\n        <div @click.stop=\"doLogout\" style=\"padding:11px 16px;cursor:pointer;font-size:13px;color:#EF4444;font-weight:600;display:flex;align-items:center;gap:8px;\" onmouseover=\"this.style.background='#FEF2F2'\" onmouseout=\"this.style.background='#fff'\">\n          <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9\" stroke=\"#EF4444\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Logout\n        </div>\n      </div>\n    </div>\n  </div>\n\n  <!-- TOOLBAR -->\n<div\n  style=\"display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;padding:12px 20px;background:#FFFFFF;border-bottom:1px solid #E2E8F0;\">\n  <div style=\"display:flex;flex-direction:column;gap:4px;\">\n    <label style=\"font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Slave ID</label>\n    <input v-model=\"slaveInput\" type=\"number\" min=\"1\" max=\"200\" placeholder=\"1-200\" style=\"padding:8px 12px;border:1px solid #E2E8F0;border-radius:7px;font-size:13px;font-weight:600;outline:none;color:#0F172A;background:#F8FAFC;width:90px;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/>\n  </style>\n    </div>\n    <button v-if=\"!isRunning\" @click=\"startLive\"\n      style=\"padding:9px 22px;background:#22C55E;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;font-weight:700;align-self:flex-end;\">\n      ▶ Start Live\n    </button>\n    <button v-else @click=\"stopLive\"\n      style=\"padding:9px 22px;background:#EF4444;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;font-weight:700;align-self:flex-end;\">\n      ⬛ Stop\n    </button>\n    <button v-if=\"!isRunning && rawTable.length > 0\" @click=\"downloadPDF\"\n      style=\"padding:9px 20px;background:#F1F5F9;color:#475569;border:1px solid #E2E8F0;border-radius:7px;cursor:pointer;font-size:13px;font-weight:700;align-self:flex-end;\">\n      📄 Save Chart PDF\n    </button>\n  </div>\n\n  <div style=\"padding:16px 20px;flex:1;display:flex;flex-direction:column;gap:12px;\">\n    <!-- LIVE BANNER -->\n    <div v-if=\"isRunning\" style=\"display:flex;align-items:center;gap:10px;padding:10px 16px;background:#F0FDF4;border-radius:8px;border:1px solid #BBF7D0;\">\n      <span class=\"liveblip\"></span>\n      <span style=\"font-size:13px;color:#22C55E;font-weight:700;\">LIVE — Slave {{ activeSlaveId }}</span>\n      <span style=\"font-size:12px;color:#475569;\">{{ rawTable.length }} reading{{ rawTable.length !== 1 ? 's' : '' }} collected</span>\n      <span v-if=\"rawTable.length\" style=\"margin-left:auto;font-size:24px;font-weight:900;color:#3B82F6;\">{{ rawTable[rawTable.length-1].v }}</span>\n    </div>\n\n    <!-- STOPPED BANNER -->\n    <div v-if=\"!isRunning && rawTable.length > 0\" style=\"display:flex;align-items:center;gap:10px;padding:10px 16px;background:#EFF6FF;border-radius:8px;border:1px solid #BFDBFE;\">\n      <span style=\"font-size:14px;\">📊</span>\n      <span style=\"font-size:13px;color:#3B82F6;font-weight:700;\">Session complete — {{ rawTable.length }} readings recorded</span>\n      <span v-if=\"rawTable.length > 1\" style=\"font-size:12px;color:#475569;margin-left:6px;\">{{ rawTable[0].t }} to {{ rawTable[rawTable.length-1].t }}</span>\n    </div>\n\n    <!-- STATUS -->\n    <div v-if=\"statusMsg\" :style=\"{display:'flex',alignItems:'center',gap:'8px',background:statusErr?'#FEF2F2':'#F0FDF4',borderLeft:'3px solid '+(statusErr?'#EF4444':'#22C55E'),borderRadius:'8px',padding:'10px 16px',fontSize:'13px',color:statusErr?'#EF4444':'#22C55E',fontWeight:'600'}\">\n      {{ statusErr ? '⚠ ' : '✓ ' }}{{ statusMsg }}\n    </div>\n\n    <!-- CHART CARD -->\n    <div style=\"background:#FFFFFF;border-radius:10px;padding:20px 24px 16px;border:1px solid #E2E8F0;box-shadow:0 1px 3px rgba(0,0,0,0.04);flex:1;\">\n      <div style=\"display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;\">\n        <div>\n          <div style=\"font-size:15px;font-weight:700;color:#0F172A;\">📈 Live DP Chart</div>\n          <div style=\"font-size:12px;color:#6B7280;margin-top:3px;\">\n            <span v-if=\"isRunning && activeSlaveId\">Slave ID {{ activeSlaveId }} &mdash; 1 point/sec</span>\n            <span v-else-if=\"!isRunning && rawTable.length > 0\">Slave ID {{ activeSlaveId }} &mdash; session ended</span>\n            <span v-else>Enter Slave ID and press ▶ Start Live</span>\n          </div>\n        </div>\n      </div>\n      <canvas id=\"dpLiveChart\" style=\"width:100%;display:block;border-radius:8px;\"></canvas>\n    </div>\n  </div>\n</div>\n<script>\n  (function () {\n  var PAGES = [\n    { label: 'DP Monitor',    path: '/dashboard/page2'      },\n    { label: 'Performance',   path: '/dashboard/performance' },\n    { label: 'Daily Reports', path: '/dashboard/reports'     },\n  ];\n\n  function getCurrentTab() {\n    var p = window.location.pathname;\n    var best = null, bestLen = 0;\n    for (var i = 0; i < PAGES.length; i++) {\n      var pg = PAGES[i];\n      if (p.startsWith(pg.path) && pg.path.length > bestLen) {\n        best = pg; bestLen = pg.path.length;\n      }\n    }\n    return best;\n  }\n\n  function updateActiveTab() {\n    var current = getCurrentTab();\n    document.querySelectorAll('.jp-nav-tab').forEach(function(tab) {\n      tab.classList.toggle('jp-active', !!(current && tab.dataset.path === current.path));\n    });\n  }\n\n  function navigate(path) {\n    if (window.location.pathname === path) return;\n    var content = document.querySelector('.nrdb-ui-page') || document.body;\n    content.style.transition = 'opacity 0.12s ease';\n    content.style.opacity = '0';\n    setTimeout(function() {\n      history.pushState({}, '', path);\n      window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));\n      updateActiveTab();\n      setTimeout(function() { content.style.opacity = '1'; }, 80);\n    }, 120);\n  }\n\n  function injectNav() {\n    if (document.getElementById('jetpace-topnav')) {\n      updateActiveTab();\n      return;\n    }\n\n    var current = getCurrentTab();\n    var nav = document.createElement('div');\n    nav.id = 'jetpace-topnav';\n\n    nav.innerHTML =\n      '<div class=\"jp-brand\">' +\n        '<div class=\"jp-brand-logo\">' +\n          '<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\">' +\n            '<path d=\"M12 3C7.03 3 3 7.03 3 12c0 2.39.88 4.57 2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>' +\n            '<path d=\"M12 3c4.97 0 9 4.03 9 9 0 2.39-.88 4.57-2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/>' +\n            '<circle cx=\"12\" cy=\"12\" r=\"1.5\" fill=\"white\"/>' +\n            '<line x1=\"12\" y1=\"12\" x2=\"8\" y2=\"8\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\"/>' +\n          '</svg>' +\n        '</div>' +\n        '<span class=\"jp-brand-name\">Jetpace</span>' +\n      '</div>' +\n      '<div class=\"jp-nav-pills\">' +\n        PAGES.map(function(pg) {\n          var isActive = current && current.path === pg.path;\n          return '<button class=\"jp-nav-tab' + (isActive ? ' jp-active' : '') + '\" data-path=\"' + pg.path + '\">' + pg.label + '</button>';\n        }).join('') +\n      '</div>' +\n      '<div class=\"jp-spacer\"></div>';\n\n    nav.querySelectorAll('.jp-nav-tab').forEach(function(btn) {\n      btn.addEventListener('click', function() { navigate(btn.dataset.path); });\n    });\n\n    document.body.prepend(nav);\n  }\n\n  var _pushState = history.pushState.bind(history);\n  history.pushState = function() {\n    _pushState.apply(history, arguments);\n    setTimeout(updateActiveTab, 80);\n  };\n  window.addEventListener('popstate', function() { setTimeout(updateActiveTab, 80); });\n\n  function tryInject() {\n    if (document.body) { injectNav(); }\n    else { setTimeout(tryInject, 50); }\n  }\n  tryInject();\n  setTimeout(injectNav, 500);\n  setTimeout(injectNav, 1500);\n})();\n</script>\n</template>\n\n<script>\nexport default {\n  data() {\n    return {\n      slaveInput:'',activeSlaveId:null,isRunning:false,\n      points:[],rawTable:[],\n      loggedInUser:'',userMenuOpen:false,\n      statusMsg:'',statusErr:false\n    };\n  },\n  mounted() {\n    this.send({payload:{action:'session-check'}});\n    this._cv=null;this._ctx=null;this._raf=null;this._dirty=false;this._compressTimer=null;\n    setTimeout(()=>this._initCanvas(),300);\n  },\n  beforeUnmount() {\n    if(this._raf)cancelAnimationFrame(this._raf);\n    if(this._compressTimer)clearInterval(this._compressTimer);\n  },\n  methods: {\n    handleGlobalClick() { this.userMenuOpen=false; },\n    toggleUserMenu(e) { e.stopPropagation(); this.userMenuOpen=!this.userMenuOpen; },\n    doLogout() { this.userMenuOpen=false; this.send({payload:{action:'do-logout'}}); },\n    _initCanvas() {\n      const el=this.$el?this.$el.querySelector('#dpLiveChart'):document.getElementById('dpLiveChart');\n      if(!el){setTimeout(()=>this._initCanvas(),200);return;}\n      this._cv=el;this._ctx=el.getContext('2d');this._resize();this._dirty=true;this._loop();\n      window.addEventListener('resize',()=>{this._resize();this._dirty=true;});\n    },\n    _resize() {\n      const el=this._cv;if(!el)return;\n      const w=el.parentElement?el.parentElement.clientWidth-48:800;\n      el.width=Math.max(400,w);el.height=Math.max(300,Math.round(w*0.40));\n    },\n    _loop() { this._raf=requestAnimationFrame(()=>this._loop());if(this._dirty){this._dirty=false;this._draw();} },\n    _feedPoint(rawVal,rawTs,isAlert) {\n      const d=new Date(rawTs);\n      const t=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');\n      const pt={v:rawVal,t,alert:isAlert};\n      this.points.push(pt);this.rawTable.push(pt);this._dirty=true;\n    },\n    _compressOldPoints() {\n      if(!this.isRunning||this.points.length<20)return;\n      const chunk=this.points.splice(0,10),merged=[];\n      for(let i=0;i<chunk.length;i+=2){const a=chunk[i],b=chunk[i+1]||chunk[i];merged.push({v:Math.round(((a.v+b.v)/2)*100)/100,t:a.t,alert:a.alert||b.alert,compressed:true});}\n      this.points.unshift(...merged);this._dirty=true;\n    },\n    _draw() {\n      const cv=this._cv,ctx=this._ctx;if(!cv||!ctx)return;\n      const W=cv.width,H=cv.height,PL=60,PR=24,PT=20,PB=52;\n      const PW=W-PL-PR,PH=H-PT-PB,pts=this.points;\n      ctx.clearRect(0,0,W,H);ctx.fillStyle='#FFFFFF';ctx.fillRect(0,0,W,H);\n      const rawMin=pts.length?Math.min(...pts.map(p=>p.v)):0;\n      const rawMax=pts.length?Math.max(...pts.map(p=>p.v)):10;\n      const yMin=rawMin<0?Math.max(-100,Math.floor(rawMin)-2):0;\n      const yMax=Math.max(10,Math.ceil(rawMax)+2);\n      const yRange=yMax-yMin;const yf=v=>PT+PH-((v-yMin)/yRange)*PH;\n      const yStep=yRange<=20?1:yRange<=50?5:yRange<=100?10:Math.ceil(yRange/10);\n      ctx.font='11px sans-serif';ctx.textAlign='right';ctx.textBaseline='middle';\n      for(let y=yMin;y<=yMax;y+=yStep){\n        const py=yf(y);\n        ctx.strokeStyle=y===0&&yMin<0?'rgba(71,85,105,0.3)':'rgba(226,232,240,0.8)';\n        ctx.lineWidth=y===0&&yMin<0?1.5:1;ctx.setLineDash(y===0&&yMin<0?[5,4]:[]);\n        ctx.beginPath();ctx.moveTo(PL,py);ctx.lineTo(W-PR,py);ctx.stroke();ctx.setLineDash([]);\n        ctx.fillStyle=y===0&&yMin<0?'#475569':'#6B7280';\n        ctx.font=y===0&&yMin<0?'bold 11px sans-serif':'11px sans-serif';\n        ctx.fillText(y,PL-8,py);\n      }\n      ctx.save();ctx.font='11px sans-serif';ctx.fillStyle='#CBD5E1';ctx.textAlign='center';\n      ctx.translate(14,PT+PH/2);ctx.rotate(-Math.PI/2);ctx.fillText('DP Value',0,0);ctx.restore();\n      if(pts.length>1){\n        ctx.font='10px sans-serif';ctx.fillStyle='#6B7280';ctx.textAlign='center';ctx.textBaseline='top';\n        const maxLabels=10,interval=Math.ceil((pts.length-1)/(maxLabels-1)),shown=new Set();\n        for(let i=0;i<pts.length;i+=interval)shown.add(i);shown.add(0);shown.add(pts.length-1);\n        shown.forEach(i=>{\n          const px=PL+(i/(pts.length-1))*PW;\n          ctx.strokeStyle='#E2E8F0';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(px,PT+PH);ctx.lineTo(px,PT+PH+5);ctx.stroke();\n          ctx.fillStyle='#6B7280';ctx.fillText(pts[i].t,px,H-PB+9);\n        });\n      }\n      ctx.strokeStyle='#E2E8F0';ctx.lineWidth=1;\n      ctx.beginPath();ctx.moveTo(PL,PT);ctx.lineTo(PL,PT+PH);ctx.stroke();\n      ctx.beginPath();ctx.moveTo(PL,PT+PH);ctx.lineTo(W-PR,PT+PH);ctx.stroke();\n      if(pts.length<2){\n        ctx.font='14px sans-serif';ctx.fillStyle='#CBD5E1';ctx.textAlign='center';ctx.textBaseline='middle';\n        ctx.fillText(this.isRunning?'Waiting for first reading...':'Enter Slave ID and press Start Live',W/2,H/2);return;\n      }\n      const xf=i=>PL+(i/(pts.length-1))*PW;\n      const zeroY=yf(0);\n      const grad=ctx.createLinearGradient(0,PT,0,PT+PH);\n      grad.addColorStop(0,'rgba(59,130,246,0.40)');grad.addColorStop(0.6,'rgba(59,130,246,0.10)');grad.addColorStop(1,'rgba(59,130,246,0.00)');\n      ctx.save();ctx.beginPath();ctx.moveTo(xf(0),yf(pts[0].v));\n      for(let i=1;i<pts.length;i++){const cpx=(xf(i-1)+xf(i))/2;ctx.bezierCurveTo(cpx,yf(pts[i-1].v),cpx,yf(pts[i].v),xf(i),yf(pts[i].v));}\n      ctx.lineTo(xf(pts.length-1),zeroY);ctx.lineTo(xf(0),zeroY);ctx.closePath();ctx.fillStyle=grad;ctx.fill();ctx.restore();\n      ctx.save();ctx.beginPath();ctx.strokeStyle='#3B82F6';ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.moveTo(xf(0),yf(pts[0].v));\n      for(let i=1;i<pts.length;i++){const cpx=(xf(i-1)+xf(i))/2;ctx.bezierCurveTo(cpx,yf(pts[i-1].v),cpx,yf(pts[i].v),xf(i),yf(pts[i].v));}\n      ctx.stroke();ctx.restore();\n      if(this.isRunning){\n        const lx=xf(pts.length-1),ly=yf(pts[pts.length-1].v);\n        ctx.save();ctx.beginPath();ctx.arc(lx,ly,5,0,Math.PI*2);ctx.fillStyle='#3B82F6';ctx.shadowColor='rgba(59,130,246,0.5)';ctx.shadowBlur=10;ctx.fill();ctx.restore();\n      }\n      pts.forEach((p,i)=>{if(!p.alert)return;ctx.save();ctx.beginPath();ctx.arc(xf(i),yf(p.v),5,0,Math.PI*2);ctx.fillStyle='#EF4444';ctx.shadowColor='rgba(239,68,68,0.5)';ctx.shadowBlur=6;ctx.fill();ctx.restore();});\n      if(!this.isRunning&&pts.length>1){\n        ctx.save();ctx.font='11px sans-serif';ctx.fillStyle='#CBD5E1';ctx.textAlign='right';ctx.textBaseline='top';\n        ctx.fillText('Session: '+pts[0].t+' — '+pts[pts.length-1].t,W-PR,PT+4);\n        ctx.fillText('Slave ID: '+this.activeSlaveId,W-PR,PT+18);ctx.restore();\n      }\n    },\n    startLive() {\n      const id=parseInt(this.slaveInput);\n      if(isNaN(id)||id<1||id>200){this.statusMsg='Enter a valid Slave ID (1–200).';this.statusErr=true;return;}\n      this.activeSlaveId=id;this.isRunning=true;this.points=[];this.rawTable=[];this.statusMsg='';this.statusErr=false;this._dirty=true;\n      if(this._compressTimer)clearInterval(this._compressTimer);\n      this._compressTimer=setInterval(()=>this._compressOldPoints(),5000);\n    },\n    stopLive() {\n      this.isRunning=false;\n      if(this._compressTimer){clearInterval(this._compressTimer);this._compressTimer=null;}\n      this._dirty=true;\n    },\n    downloadPDF() {\n      if(!this._cv||!this.rawTable.length)return;\n      this._draw();const imgData=this._cv.toDataURL('image/png');\n      const rows=this.rawTable,slaveId=this.activeSlaveId;\n      const startTs=rows[0]?rows[0].t:'',endTs=rows[rows.length-1]?rows[rows.length-1].t:'';\n      const alertCnt=rows.filter(r=>r.alert).length;\n      const tableBody=rows.map((r,i)=>{\n        const bg=r.alert?'#FEF2F2':(i%2===0?'#fff':'#F8FAFC');\n        return `<tr style=\"background:${bg}\"><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;color:#6B7280;\">${i+1}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;font-family:monospace;\">${r.t}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;text-align:right;font-weight:700;color:${r.v<0?'#EF4444':'#0F172A'};\">${r.v}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;text-align:center;\"><span style=\"font-weight:700;font-size:11px;color:${r.alert?'#EF4444':'#22C55E'}\">${r.alert?'ALERT':'NORMAL'}</span></td></tr>`;\n      }).join('');\n      const htmlContent=`<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>DP Chart — Slave ${slaveId}</title><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;font-size:12px;color:#0F172A;background:#fff;padding:28px 32px;}.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;border-bottom:2px solid #E2E8F0;padding-bottom:14px;}.slave-badge{background:#3B82F6;color:#fff;padding:10px 20px;border-radius:10px;text-align:center;min-width:110px;}.slave-badge .label{font-size:10px;opacity:0.8;text-transform:uppercase;}.slave-badge .value{font-size:22px;font-weight:900;}.chart-img{width:100%;border-radius:8px;border:1px solid #E2E8F0;margin-bottom:20px;}table{width:100%;border-collapse:collapse;}thead tr{background:#E2E8F0;}th{padding:7px 10px;color:#475569;font-size:11px;font-weight:700;text-align:left;}.footer{margin-top:16px;font-size:10px;color:#6B7280;text-align:right;border-top:1px solid #E2E8F0;padding-top:8px;}</style></head><body><div class=\"header\"><div><h1 style=\"font-size:18px;font-weight:800;color:#0F172A;margin-bottom:4px;\">📈 Live DP Chart Report</h1><div style=\"font-size:11px;color:#475569;line-height:1.7;\">Session: <b>${startTs}</b> to <b>${endTs}</b><br>Total Readings: <b>${rows.length}</b> &nbsp;|&nbsp; Alert Readings: <b style=\"color:#EF4444;\">${alertCnt}</b></div></div><div class=\"slave-badge\"><div class=\"label\">Slave ID</div><div class=\"value\">${slaveId}</div></div></div><img src=\"${imgData}\" class=\"chart-img\"/><div style=\"font-size:13px;font-weight:700;color:#0F172A;margin-bottom:10px;padding-left:8px;border-left:3px solid #3B82F6;\">Per-Second Reading Log</div><table><thead><tr><th style=\"width:48px;\">#</th><th>Timestamp</th><th style=\"text-align:right;\">DP Value</th><th style=\"text-align:center;\">Alarm Status</th></tr></thead><tbody>${tableBody}</tbody></table><div class=\"footer\">Generated: ${new Date().toLocaleString()} — Jetpace Monitoring System</div></body></html>`;\n      const win=window.open('','_blank','width=960,height=900');\n      if(win){win.document.write(htmlContent);win.document.close();win.focus();setTimeout(()=>{win.print();},700);}\n      else{this.statusMsg='Popup blocked — please allow popups for PDF export.';this.statusErr=true;}\n    }\n  },\n  watch: {\n    msg(m) {\n      if(!m||!m.payload)return;\n      if(m.payload.action==='session-result'){\n      if(!m.payload.authenticated){\n      // Check localStorage before redirecting\n      const localAuth = localStorage.getItem('jp_auth');\n      const localUser = localStorage.getItem('jp_user');\n      if(localAuth === '1' && localUser) {\n      this.loggedInUser = localUser;\n      return; // Stay on page, trust local session\n      }\n      window.location.href='/dashboard/login';\n      return;\n      }\n      if(m.payload.userId){\n      this.loggedInUser=m.payload.userId;\n      localStorage.setItem('jp_user', m.payload.userId);\n      localStorage.setItem('jp_auth','1');\n      }\n      return;\n      }\n      if(m.payload.action==='navigate-login'){\n      localStorage.removeItem('jp_auth');\n      localStorage.removeItem('jp_user');\n      window.location.href='/dashboard/login';\n      return;\n      }\n      if(m.payload.action==='chart-live-point'){\n        if(!this.isRunning)return;\n        if(Number(m.payload.slaveId)!==Number(this.activeSlaveId))return;\n        this._feedPoint(Number(m.payload.dpValue),m.payload.ts,m.payload.alarm==='ALERT');return;\n      }\n    }\n  }\n};\n</script>",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 310,
+        "y": 600,
+        "wires": [
+            [
+                "25557eb1d4495d75"
+            ]
+        ]
+    },
+    {
+        "id": "f14bd939fea31f8b",
+        "type": "ui-template",
+        "z": "97181efef207d3e8",
+        "group": "",
+        "page": "",
+        "ui": "98488f60b3c1e6bb",
+        "name": "",
+        "order": 2,
+        "width": 0,
+        "height": 0,
+        "head": "",
+        "format": "  /* ===== REMOVE DEFAULT NODE-RED HEADER ===== */\n  md-toolbar,\n  .md-toolbar-tools,\n  .nrdb-ui-toolbar,\n  .nrdb-ui-header,\n  md-toolbar.md-default-theme,\n  md-toolbar.md-whiteframe-1dp {\n    display: none !important;\n    height: 0 !important;\n    min-height: 0 !important;\n    overflow: hidden !important;\n  }\n\n  /* ===== SIDEBAR ===== */\n  .nrdb-ui-sidebar {\n    position: fixed !important;\n    top: 54px;\n    left: 0;\n    width: 240px;\n    height: calc(100vh - 54px) !important;\n    background: linear-gradient(180deg, #0a0f1a 0%, #0b1120 100%) !important;\n    overflow-y: auto;\n    z-index: 1000;\n    border-right: 1px solid rgba(255, 255, 255, 0.05);\n  }\n\n  /* Sidebar Items */\n  .nrdb-ui-sidebar md-list-item {\n    color: #9ca3af !important;\n    font-weight: 500;\n    border-radius: 10px;\n    margin: 6px 10px;\n    transition: all 0.2s ease;\n  }\n\n  .nrdb-ui-sidebar md-list-item:hover {\n    background: rgba(255, 255, 255, 0.06);\n    color: #e5e7eb !important;\n  }\n\n  .nrdb-ui-sidebar .md-list-item._md-button.md-focused {\n    background: linear-gradient(135deg, #0094CE, #0077b6) !important;\n    color: #fff !important;\n    box-shadow: 0 0 10px rgba(0, 148, 206, 0.4);\n  }\n\n  /* ===== MAIN CONTENT (FIXED SPACING) ===== */\n  .nrdb-ui-main {\n    margin-left: 240px !important;\n    margin-top: 54px !important;\n\n    /* 🔥 Balanced spacing */\n    padding-left: 10px !important;\n    padding-right: 10px !important;\n\n    background: #0f172a !important;\n  }\n\n  /* Remove unwanted outer spacing */\n  .nrdb-ui-page,\n  .nrdb-ui-content,\n  md-content {\n    margin: 0 !important;\n    padding: 0 !important;\n  }\n\n  /* Remove card extra margins */\n  .nrdb-ui-group,\n  .nrdb-ui-cardpanel,\n  md-card {\n    margin-left: 0 !important;\n    margin-right: 0 !important;\n  }\n\n  /* ===== TOP NAVBAR ===== */\n  #jetpace-topnav {\n    position: fixed;\n    top: 0;\n    left: 0;\n    right: 0;\n    height: 54px;\n\n    background: linear-gradient(180deg, #0b1120 0%, #0a0f1a 100%);\n    display: flex;\n    align-items: center;\n    justify-content: space-between;\n    padding: 0 20px;\n\n    z-index: 9999;\n\n    border-bottom: 1px solid rgba(255, 255, 255, 0.06);\n    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);\n  }\n\n  /* Brand */\n  .jp-brand {\n    display: flex;\n    align-items: center;\n    gap: 10px;\n  }\n\n  .jp-brand-logo {\n    width: 32px;\n    height: 32px;\n    background: linear-gradient(135deg, #0094CE 0%, #005a8e 100%);\n    border-radius: 8px;\n  }\n\n  .jp-brand-name {\n    font-size: 16px;\n    font-weight: 700;\n    color: #e5e7eb;\n  }\n\n  /* Nav Pills */\n  .jp-nav-pills {\n    background: rgba(255, 255, 255, 0.04);\n    border-radius: 999px;\n    padding: 4px;\n    display: flex;\n    gap: 4px;\n    border: 1px solid rgba(255, 255, 255, 0.06);\n  }\n\n  .jp-nav-tab {\n    padding: 6px 16px;\n    border-radius: 999px;\n    font-size: 13px;\n    font-weight: 600;\n    color: #9ca3af;\n    transition: all 0.2s ease;\n    cursor: pointer;\n  }\n\n  .jp-nav-tab:hover {\n    color: #e5e7eb;\n    background: rgba(255, 255, 255, 0.06);\n  }\n\n  .jp-nav-tab.jp-active {\n    background: linear-gradient(135deg, #0094CE, #0077b6);\n    color: #fff;\n    box-shadow: 0 0 12px rgba(0, 148, 206, 0.4);\n  }\n\n  /* Right spacer */\n  .jp-spacer {\n    width: 120px;\n  }\n\n  /* ===== SMOOTH UI TOUCHES ===== */\n  .nrdb-ui-sidebar {\n    box-shadow: 4px 0 10px rgba(0, 0, 0, 0.3);\n  }\n\n  /* ===== TARGET THE EXACT TOP BLACK BAR ===== */\n  .nrdb-ui-group:first-child md-card,\n  .nrdb-ui-group:first-child .nrdb-ui-cardpanel,\n  .nrdb-ui-group:first-child .md-card {\n\n    border-radius: 16px !important;\n    overflow: hidden !important;\n    /* 🔥 THIS IS KEY */\n\n    /* spacing */\n    margin: 0 0 10px 0 !important;\n    padding: 10px 16px !important;\n\n    /* background */\n    background: linear-gradient(135deg, #0b1120, #0f172a) !important;\n\n    /* shadow */\n    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;\n\n    border: 1px solid rgba(255, 255, 255, 0.05) !important;\n  }\n\n  /* ===== REMOVE PARENT CLIPPING (VERY IMPORTANT) ===== */\n  .nrdb-ui-group:first-child {\n    overflow: visible !important;\n  }\n\n  /* Sometimes Angular adds wrapper */\n  .nrdb-ui-group:first-child>div {\n    overflow: visible !important;\n  }\n\n  /* ===== REMOVE GAP ABOVE ===== */\n  .nrdb-ui-group:first-child {\n    margin-top: 0 !important;\n  }",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "site:style",
+        "className": "",
+        "x": 1260,
+        "y": 500,
+        "wires": [
+            [
+                "fb91e59e598a84a3"
+            ]
+        ]
+    },
+    {
+        "id": "ca875a7eba52503b",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Route UI Messages",
+        "func": "if (!msg.payload || !msg.payload.action) return null;\n\nif (msg.payload.action === 'device-settings-save') {\n    let d = msg.payload;\n    let settings = flow.get('deviceSettings', 'file') || {};\n    settings['slave_' + d.id] = { Location: d.location || '', RoomNo: d.roomNo || '', LSP: parseFloat(d.lsp) || 0, HSP: parseFloat(d.hsp) || 0 };\n    flow.set('deviceSettings', settings, 'file');\n    let tableData = flow.get('tableData', 'file') || {};\n    if (tableData['slave_' + d.id]) {\n        tableData['slave_' + d.id].Location = d.location || '';\n        tableData['slave_' + d.id].RoomNo   = d.roomNo   || '';\n        tableData['slave_' + d.id].LSP = parseFloat(d.lsp) || 0;\n        tableData['slave_' + d.id].HSP = parseFloat(d.hsp) || 0;\n        flow.set('tableData', tableData, 'file');\n    }\n    return [null, null, null, null, null, null, null];\n}\n\nif (msg.payload.action === 'set-active-ids')  return [msg, null, null, null, null, null, null];\nif (msg.payload.action === 'auth-check')      return [null, msg, null, null, null, null, null];\nif (msg.payload.action === 'report-query')    return [null, null, msg, null, null, null, null];\nif (msg.payload.action === 'save-options' || msg.payload.action === 'load-options') return [null, null, null, msg, null, null, null];\nif (msg.payload.action === 'session-check' || msg.payload.action === 'do-logout')   return [null, null, null, null, msg, null, null];\nif (msg.payload.action === 'alarm-report-query') return [null, null, null, null, null, msg, null];\nif (msg.payload.action === 'ack-save')           return [null, null, null, null, null, null, msg];\n\nreturn [null, null, null, null, null, null, null];",
+        "outputs": 7,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1270,
+        "y": 240,
+        "wires": [
+            [
+                "13658c8dbb45fa5b"
+            ],
+            [
+                "f12549b2dd6d34ab"
+            ],
+            [
+                "13a3e868b59d5c99"
+            ],
+            [
+                "2c94577b069d4261"
+            ],
+            [
+                "fb91e59e598a84a3"
+            ],
+            [
+                "e152a2fc013580f2"
+            ],
+            [
+                "d98d6d70473329d0"
+            ]
+        ]
+    },
+    {
+        "id": "99ca09cc0be8d109",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Format Report Result",
+        "func": "const rows = msg.payload || [];\nconst meta = msg._reportMeta || {};\nconst settings = flow.get('deviceSettings', 'file') || {};\n\nmsg.payload = {\n    action: 'report-result',\n    rows: rows.map(r => {\n        const d = settings['slave_' + r.slave_id] || { Location: '', RoomNo: '' };\n        return { ...r, location: d.Location || '', roomNo: d.RoomNo || '' };\n    }),\n    meta,\n    count: rows.length\n};\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1420,
+        "y": 420,
+        "wires": [
+            [
+                "bc1354e889956316",
+                "1a0d67c383948198"
+            ]
+        ]
+    },
+    {
+        "id": "e152a2fc013580f2",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Build Alarm Query",
+        "func": "if (!msg.payload || msg.payload.action !== 'alarm-report-query') return null;\n\nconst p = msg.payload;\nconst slaveIds = (p.slaveIds || []).map(Number).filter(n => n >= 1 && n <= 200);\n\nif (slaveIds.length === 0) {\n    msg.payload = { action: 'alarm-report-result', error: 'No slave IDs selected.' };\n    return [null, msg];\n}\nif (!p.dateFrom || !p.dateTo) {\n    msg.payload = { action: 'alarm-report-result', error: 'Both date fields are required.' };\n    return [null, msg];\n}\n\nconst dateStart = p.dateFrom + ' 00:00:00';\nconst dateEnd   = p.dateTo   + ' 23:59:59';\n\nlet formatStr, groupBy;\nif (p.interval === 'hourly') {\n    formatStr = 'yyyy-MM-dd HH:00:00';\n    groupBy   = \"slave_id, FORMAT(logged_at, 'yyyy-MM-dd HH:00:00')\";\n} else if (p.interval === 'minutely') {\n    formatStr = 'yyyy-MM-dd HH:mm:00';\n    groupBy   = \"slave_id, FORMAT(logged_at, 'yyyy-MM-dd HH:mm:00')\";\n} else {\n    formatStr = 'yyyy-MM-dd';\n    groupBy   = \"slave_id, FORMAT(logged_at, 'yyyy-MM-dd')\";\n}\n\nmsg.topic = `\nSELECT\n    slave_id,\n    FORMAT(logged_at, '${formatStr}') AS period,\n    MIN(CASE WHEN alarm_status='ALERT' THEN dp_value END) AS min_alert_dp,\n    MAX(CASE WHEN alarm_status='ALERT' THEN dp_value END) AS max_alert_dp,\n    MIN(CASE WHEN alarm_status='ALERT' THEN logged_at END) AS alarm_start,\n    MAX(CASE WHEN alarm_status='ALERT' THEN logged_at END) AS alarm_end,\n    COUNT(CASE WHEN alarm_status='ALERT' THEN 1 END) AS alert_count\nFROM dp_log\nWHERE slave_id IN (${slaveIds.join(',')})\n  AND logged_at BETWEEN '${dateStart}' AND '${dateEnd}'\nGROUP BY ${groupBy}\nHAVING COUNT(CASE WHEN alarm_status='ALERT' THEN 1 END) > 0\nORDER BY slave_id, period\n`;\n\nmsg.payload = {};\nmsg._alarmMeta = { slaveIds, interval: p.interval, dateFrom: p.dateFrom, dateTo: p.dateTo };\nreturn [msg, null];",
+        "outputs": 2,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 770,
+        "y": 780,
+        "wires": [
+            [
+                "032726d546bf834b"
+            ],
+            [
+                "bc1354e889956316"
+            ]
+        ]
+    },
+    {
+        "id": "032726d546bf834b",
+        "type": "MSSQL",
+        "z": "97181efef207d3e8",
+        "mssqlCN": "50c3fd16ed798901",
+        "name": "MSSQL Alarm Query",
+        "outField": "payload",
+        "returnType": 0,
+        "throwErrors": 1,
+        "query": "",
+        "modeOpt": "queryMode",
+        "modeOptType": "query",
+        "queryOpt": "topic",
+        "queryOptType": "msg",
+        "paramsOpt": "",
+        "paramsOptType": "none",
+        "rows": "rows",
+        "rowsType": "msg",
+        "parseMustache": false,
+        "params": [],
+        "x": 1020,
+        "y": 780,
+        "wires": [
+            [
+                "87c18009ab051145"
+            ]
+        ]
+    },
+    {
+        "id": "87c18009ab051145",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Format Alarm Result",
+        "func": "const rows = msg.payload || [];\nconst meta = msg._alarmMeta || {};\nconst settings = flow.get('deviceSettings', 'file') || {};\nconst acks = flow.get('alarmAcks', 'file') || {};\n\nconst enriched = rows.map(r => {\n    const d = settings['slave_' + r.slave_id] || { Location: '', RoomNo: '', LSP: -60, HSP: 60 };\n    const lsp = d.LSP != null ? d.LSP : -60;\n    const hsp = d.HSP != null ? d.HSP : 60;\n    const minDp = Number(r.min_alert_dp);\n    const maxDp = Number(r.max_alert_dp);\n    let alarmType = 'HIGH';\n    if (minDp < lsp && maxDp <= hsp) alarmType = 'LOW';\n    else if (maxDp > hsp && minDp < lsp) alarmType = 'HIGH/LOW';\n    const alertDp = alarmType === 'LOW' ? minDp : maxDp;\n    const ackKey = r.slave_id + '_' + r.period;\n    return {\n        slave_id:     Number(r.slave_id),\n        period:       r.period,\n        min_alert_dp: minDp,\n        max_alert_dp: maxDp,\n        alert_dp_value: alertDp,\n        alarm_start:  r.alarm_start,\n        alarm_end:    r.alarm_end,\n        alert_count:  Number(r.alert_count),\n        location:     d.Location || '',\n        roomNo:       d.RoomNo   || '',\n        lsp, hsp, alarmType,\n        ack: acks[ackKey] || null\n    };\n});\n\nmsg.payload = { action: 'alarm-report-result', rows: enriched, meta, count: enriched.length };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1230,
+        "y": 780,
+        "wires": [
+            [
+                "bc1354e889956316"
+            ]
+        ]
+    },
+    {
+        "id": "d98d6d70473329d0",
+        "type": "function",
+        "z": "97181efef207d3e8",
+        "name": "Handle ACK",
+        "func": "if (!msg.payload || msg.payload.action !== 'ack-save') return null;\n\nconst d = msg.payload;\nconst acks = flow.get('alarmAcks', 'file') || {};\nconst key = d.slaveId + '_' + d.period;\n\nacks[key] = {\n    slaveId:     d.slaveId,\n    period:      d.period,\n    destination: d.destination || '',\n    alarmStart:  d.alarmStart,\n    alarmEnd:    d.alarmEnd,\n    ackedBy:     d.ackedBy || 'Unknown',\n    ackedAt:     new Date().toISOString(),\n    remarks:     d.remarks || ''\n};\nflow.set('alarmAcks', acks, 'file');\n\nmsg.payload = { action: 'ack-result', success: true, key, ack: acks[key] };\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1030,
+        "y": 720,
+        "wires": [
+            [
+                "bc1354e889956316"
+            ]
+        ]
+    },
+    {
+        "id": "bc1354e889956316",
+        "type": "ui-template",
+        "z": "97181efef207d3e8",
+        "group": "a471d4923c697568",
+        "page": "",
+        "ui": "",
+        "name": "Daily Reports Page",
+        "order": 2,
+        "width": "0",
+        "height": "0",
+        "head": "",
+        "format": "<template>\n  <div style=\"width:100%;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F8FAFC;display:flex;flex-direction:column;min-height:80vh;\" @click=\"userMenuOpen=false;downloadMenuOpen=false;\">\n\n  <canvas id=\"dpReportChart\" style=\"position:fixed;left:-9999px;top:-9999px;visibility:hidden;\"></canvas>\n\n  <!-- HEADER -->\n  <div style=\"display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:54px;background:#0F172A;box-shadow:0 1px 4px rgba(0,0,0,0.25);flex-shrink:0;\">\n    <div style=\"display:flex;align-items:center;gap:10px;\">\n      <svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M12 3C7.03 3 3 7.03 3 12c0 2.39.88 4.57 2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><path d=\"M12 3c4.97 0 9 4.03 9 9 0 2.39-.88 4.57-2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><circle cx=\"12\" cy=\"12\" r=\"1.5\" fill=\"white\"/><line x1=\"12\" y1=\"12\" x2=\"8\" y2=\"8\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg>\n      <span style=\"font-size:17px;font-weight:800;color:#fff;letter-spacing:-0.3px;\">Jetpace</span>\n      <span style=\"font-size:10px;color:rgba(255,255,255,0.45);background:rgba(255,255,255,0.08);padding:2px 8px;border-radius:10px;font-weight:600;letter-spacing:.04em;\">Daily Reports</span>\n    </div>\n    <div style=\"position:relative;\">\n      <button @click.stop=\"toggleUserMenu\" style=\"display:flex;align-items:center;gap:8px;padding:6px 14px;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;\">\n        <span style=\"display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;background:#3B82F6;border-radius:50%;font-size:11px;font-weight:800;\">{{ (loggedInUser||'U')[0].toUpperCase() }}</span>\n        {{ loggedInUser || 'User' }}\n        <span style=\"font-size:9px;opacity:0.5;\">{{ userMenuOpen ? '▲' : '▼' }}</span>\n      </button>\n      <div v-if=\"userMenuOpen\" @click.stop style=\"position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1px solid #E2E8F0;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:9990;min-width:200px;overflow:hidden;\">\n        <div style=\"padding:12px 16px;border-bottom:1px solid #E2E8F0;background:#F8FAFC;\">\n          <div style=\"font-size:10px;color:#6B7280;text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px;\">Signed in as</div>\n          <div style=\"font-size:14px;font-weight:700;color:#0F172A;\">{{ loggedInUser || 'User' }}</div>\n        </div>\n        <div @click.stop=\"doLogout\" style=\"padding:11px 16px;cursor:pointer;font-size:13px;color:#EF4444;font-weight:600;display:flex;align-items:center;gap:8px;\" onmouseover=\"this.style.background='#FEF2F2'\" onmouseout=\"this.style.background='#fff'\">\n          <svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9\" stroke=\"#EF4444\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Logout\n        </div>\n      </div>\n    </div>\n  </div>\n\n  <!-- SUB-TABS -->\n  <div style=\"display:flex;border-bottom:2px solid #E2E8F0;background:#FFFFFF;padding:0 20px;\">\n    <button @click=\"activeMainTab='parameter'\" :style=\"{borderBottom:activeMainTab==='parameter'?'3px solid #3B82F6':'3px solid transparent',color:activeMainTab==='parameter'?'#3B82F6':'#6B7280',fontWeight:activeMainTab==='parameter'?'700':'500'}\" style=\"padding:13px 22px;background:none;border-top:none;border-left:none;border-right:none;cursor:pointer;font-size:13px;margin-bottom:-2px;transition:all .15s;\">📊 Parameter Report</button>\n    <button @click=\"activeMainTab='alarm'\" :style=\"{borderBottom:activeMainTab==='alarm'?'3px solid #EF4444':'3px solid transparent',color:activeMainTab==='alarm'?'#EF4444':'#6B7280',fontWeight:activeMainTab==='alarm'?'700':'500'}\" style=\"padding:13px 22px;background:none;border-top:none;border-left:none;border-right:none;cursor:pointer;font-size:13px;margin-bottom:-2px;display:flex;align-items:center;gap:7px;transition:all .15s;\">🔔 Alarm Report<span v-if=\"pendingAckCount>0\" style=\"background:#EF4444;color:#fff;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:800;\">{{ pendingAckCount }}</span></button>\n  </div>\n\n  <!-- TOOLBAR -->\n  <div style=\"display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;padding:14px 20px;background:#FFFFFF;border-bottom:1px solid #E2E8F0;\">\n    <div style=\"display:flex;flex-direction:column;gap:4px;\">\n      <label style=\"font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Slave IDs</label>\n      <input v-model=\"slaveInput\" type=\"text\" placeholder=\"e.g. 1,2,5,10-15\" style=\"padding:8px 12px;border:1px solid #E2E8F0;border-radius:7px;font-size:13px;outline:none;color:#0F172A;background:#F8FAFC;min-width:180px;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/>\n    </div>\n    <div style=\"display:flex;flex-direction:column;gap:4px;\">\n      <label style=\"font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Interval</label>\n      <select v-model=\"interval\" style=\"padding:8px 12px;border:1px solid #E2E8F0;border-radius:7px;font-size:13px;outline:none;color:#0F172A;background:#F8FAFC;min-width:140px;\">\n        <option value=\"daily\">Daily</option><option value=\"hourly\">Hourly</option><option value=\"minutely\">Minutely</option>\n      </select>\n    </div>\n    <div style=\"display:flex;flex-direction:column;gap:4px;\">\n      <label style=\"font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">From Date</label>\n      <input v-model=\"dateFrom\" type=\"date\" style=\"padding:8px 12px;border:1px solid #E2E8F0;border-radius:7px;font-size:13px;outline:none;color:#0F172A;background:#F8FAFC;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/>\n    </div>\n    <div style=\"display:flex;flex-direction:column;gap:4px;\">\n      <label style=\"font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">To Date</label>\n      <input v-model=\"dateTo\" type=\"date\" style=\"padding:8px 12px;border:1px solid #E2E8F0;border-radius:7px;font-size:13px;outline:none;color:#0F172A;background:#F8FAFC;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"/>\n    </div>\n    <button @click=\"previewReport\" style=\"padding:9px 20px;background:#3B82F6;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;\">🔍 Preview Report</button>\n    <div style=\"position:relative;\">\n      <button @click.stop=\"downloadMenuOpen=!downloadMenuOpen\" style=\"padding:9px 20px;background:#F1F5F9;color:#475569;border:1px solid #E2E8F0;border-radius:7px;cursor:pointer;font-size:13px;font-weight:700;white-space:nowrap;\">⬇ Download ▾</button>\n      <div v-if=\"downloadMenuOpen\" @click.stop style=\"position:absolute;top:100%;margin-top:4px;right:0;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.10);z-index:8000;min-width:260px;overflow:hidden;\">\n        <template v-if=\"activeMainTab==='parameter'\">\n          <div @click.stop=\"downloadParamCSV()\" style=\"padding:11px 16px;cursor:pointer;font-size:13px;color:#0F172A;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;gap:8px;\" onmouseover=\"this.style.background='#E0F2FE'\" onmouseout=\"this.style.background='#fff'\">📄 Download CSV</div>\n          <div @click.stop=\"downloadParamPDF(false)\" style=\"padding:11px 16px;cursor:pointer;font-size:13px;color:#0F172A;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;gap:8px;\" onmouseover=\"this.style.background='#E0F2FE'\" onmouseout=\"this.style.background='#fff'\">📄 Download PDF <span style=\"font-size:11px;color:#6B7280;margin-left:4px;\">(without chart)</span></div>\n          <div @click.stop=\"downloadParamPDF(true)\" style=\"padding:11px 16px;cursor:pointer;font-size:13px;color:#0F172A;display:flex;align-items:center;gap:8px;\" onmouseover=\"this.style.background='#E0F2FE'\" onmouseout=\"this.style.background='#fff'\">📈 Download PDF <span style=\"font-size:11px;color:#3B82F6;font-weight:600;margin-left:4px;\">(with chart)</span></div>\n        </template>\n        <template v-else>\n          <div @click.stop=\"downloadAlarmCSV()\" style=\"padding:11px 16px;cursor:pointer;font-size:13px;color:#0F172A;border-bottom:1px solid #F1F5F9;display:flex;align-items:center;gap:8px;\" onmouseover=\"this.style.background='#FEF2F2'\" onmouseout=\"this.style.background='#fff'\">📄 Download CSV</div>\n          <div @click.stop=\"downloadAlarmPDF()\" style=\"padding:11px 16px;cursor:pointer;font-size:13px;color:#0F172A;display:flex;align-items:center;gap:8px;\" onmouseover=\"this.style.background='#FEF2F2'\" onmouseout=\"this.style.background='#fff'\">📄 Download PDF</div>\n        </template>\n      </div>\n    </div>\n  </div>\n\n  <!-- CONTENT -->\n  <div style=\"padding:16px 20px;flex:1;\">\n\n    <!-- ====== PARAMETER REPORT ====== -->\n    <template v-if=\"activeMainTab==='parameter'\">\n      <div v-if=\"statusMsg\" :style=\"{background:statusError?'#FEF2F2':'#F0FDF4',borderLeft:'3px solid '+(statusError?'#EF4444':'#22C55E'),borderRadius:'7px',padding:'10px 14px',marginBottom:'14px',fontSize:'13px',color:statusError?'#EF4444':'#22C55E',fontWeight:'600'}\">{{ statusError?'⚠ ':'✓ ' }}{{ statusMsg }}</div>\n      <div v-if=\"loading\" style=\"text-align:center;padding:40px;color:#3B82F6;font-size:14px;font-weight:600;\">⏳ Loading report data...</div>\n      <div v-if=\"!loading && reportRows.length>0\">\n        <div style=\"display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;font-size:12px;color:#475569;\">\n          <span>📅 <b>{{ reportMeta.dateFrom }}</b> → <b>{{ reportMeta.dateTo }}</b></span>\n          <span>⏱ Interval: <b style=\"color:#0F172A;\">{{ reportMeta.interval }}</b></span>\n          <span>🔗 Devices: <b style=\"color:#0F172A;\">{{ uniqueSlaves.length }}</b></span>\n          <span>📊 Rows: <b style=\"color:#0F172A;\">{{ reportRows.length }}</b></span>\n          <span style=\"color:#EF4444;\">⚠ Alerts: <b>{{ alertCount }}</b></span>\n        </div>\n        <div style=\"display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;\">\n          <button @click=\"activeTab='all'\" :style=\"{background:activeTab==='all'?'#3B82F6':'#FFFFFF',color:activeTab==='all'?'#fff':'#3B82F6',border:'1px solid '+(activeTab==='all'?'#3B82F6':'#BFDBFE')}\" style=\"padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:700;\">All Devices</button>\n          <button v-for=\"sid in uniqueSlaves\" :key=\"sid\" @click=\"activeTab=sid\" :style=\"{background:activeTab===sid?'#3B82F6':'#FFFFFF',color:activeTab===sid?'#fff':'#3B82F6',border:'1px solid '+(activeTab===sid?'#3B82F6':'#BFDBFE')}\" style=\"padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:700;\">ID {{ sid }}</button>\n        </div>\n        <div style=\"background:#FFFFFF;border-radius:10px;border:1px solid #E2E8F0;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.04);\">\n          <div style=\"overflow-x:auto;\">\n            <table style=\"width:100%;border-collapse:collapse;font-size:13px;\">\n              <thead>\n                <tr style=\"background:#E2E8F0;\">\n                  <th style=\"padding:11px 16px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Slave ID</th>\n                  <th style=\"padding:11px 16px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Destination</th>\n                  <th style=\"padding:11px 16px;text-align:right;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">DP Value</th>\n                  <th style=\"padding:11px 16px;text-align:center;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Alarm Status</th>\n                  <th style=\"padding:11px 16px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Timestamp</th>\n                </tr>\n              </thead>\n              <tbody>\n                <tr v-for=\"(row,i) in displayRows\" :key=\"i\" :style=\"{background:row.had_alert?'#FEF2F2':(i%2===0?'#FFFFFF':'#F8FAFC')}\">\n                  <td style=\"padding:9px 16px;border-bottom:1px solid #E2E8F0;font-weight:700;color:#3B82F6;\">{{ row.slave_id }}</td>\n                  <td style=\"padding:9px 16px;border-bottom:1px solid #E2E8F0;color:#475569;\">{{ fmtDest(row.location,row.roomNo) }}</td>\n                  <td style=\"padding:9px 16px;border-bottom:1px solid #E2E8F0;text-align:right;font-weight:700;color:#0F172A;\">{{ row.dp_value }}</td>\n                  <td style=\"padding:9px 16px;border-bottom:1px solid #E2E8F0;text-align:center;\">\n                    <span :style=\"{display:'inline-flex',alignItems:'center',gap:'5px',padding:'3px 10px',borderRadius:'20px',fontSize:'11px',fontWeight:'700',background:row.had_alert?'#FEF2F2':'#F0FDF4',color:row.had_alert?'#EF4444':'#22C55E',border:'1px solid '+(row.had_alert?'#FECACA':'#BBF7D0')}\">\n                      <span :style=\"{display:'inline-block',width:'6px',height:'6px',borderRadius:'50%',background:row.had_alert?'#EF4444':'#22C55E'}\"></span>\n                      {{ row.had_alert?'ALERT':'NORMAL' }}\n                    </span>\n                  </td>\n                  <td style=\"padding:9px 16px;border-bottom:1px solid #E2E8F0;color:#475569;\">{{ row.period }}</td>\n                </tr>\n                <tr v-if=\"displayRows.length===0\"><td colspan=\"5\" style=\"padding:32px;text-align:center;color:#6B7280;font-size:13px;\">No data for selected filter.</td></tr>\n              </tbody>\n            </table>\n          </div>\n        </div>\n      </div>\n      <div v-if=\"!loading && reportRows.length===0 && hasQueried\" style=\"text-align:center;padding:48px;color:#6B7280;font-size:14px;\">No data found for the selected criteria.</div>\n    </template>\n\n    <!-- ====== ALARM REPORT ====== -->\n    <template v-if=\"activeMainTab==='alarm'\">\n      <div v-if=\"alarmStatusMsg\" :style=\"{background:alarmStatusError?'#FEF2F2':'#F0FDF4',borderLeft:'3px solid '+(alarmStatusError?'#EF4444':'#22C55E'),borderRadius:'7px',padding:'10px 14px',marginBottom:'14px',fontSize:'13px',color:alarmStatusError?'#EF4444':'#22C55E',fontWeight:'600'}\">{{ alarmStatusError?'⚠ ':'✓ ' }}{{ alarmStatusMsg }}</div>\n      <div v-if=\"alarmLoading\" style=\"text-align:center;padding:40px;color:#EF4444;font-size:14px;font-weight:600;\">⏳ Loading alarm data...</div>\n      <div v-if=\"!alarmLoading && alarmRows.length>0\">\n        <div style=\"display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;padding:10px 14px;background:#FFFFFF;border:1px solid #E2E8F0;border-radius:8px;font-size:12px;color:#475569;\">\n          <span>📅 <b>{{ alarmMeta.dateFrom }}</b> → <b>{{ alarmMeta.dateTo }}</b></span>\n          <span>⏱ Interval: <b style=\"color:#0F172A;\">{{ alarmMeta.interval }}</b></span>\n          <span>🔗 Devices: <b style=\"color:#0F172A;\">{{ uniqueAlarmSlaves.length }}</b></span>\n          <span style=\"color:#EF4444;\">🔔 Total Events: <b>{{ alarmRows.length }}</b></span>\n          <span style=\"color:#EF4444;\">⏳ Pending ACK: <b>{{ pendingAckCount }}</b></span>\n          <span style=\"color:#22C55E;\">✓ Acknowledged: <b>{{ alarmRows.length - pendingAckCount }}</b></span>\n        </div>\n        <div style=\"display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;\">\n          <button @click=\"alarmActiveTab='all'\" :style=\"{background:alarmActiveTab==='all'?'#EF4444':'#FFFFFF',color:alarmActiveTab==='all'?'#fff':'#EF4444',border:'1px solid '+(alarmActiveTab==='all'?'#EF4444':'#FECACA')}\" style=\"padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:700;\">All Devices</button>\n          <button v-for=\"sid in uniqueAlarmSlaves\" :key=\"sid\" @click=\"alarmActiveTab=sid\" :style=\"{background:alarmActiveTab===sid?'#EF4444':'#FFFFFF',color:alarmActiveTab===sid?'#fff':'#EF4444',border:'1px solid '+(alarmActiveTab===sid?'#EF4444':'#FECACA')}\" style=\"padding:5px 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:700;\">ID {{ sid }}</button>\n        </div>\n        <div style=\"background:#FFFFFF;border-radius:10px;border:1px solid #E2E8F0;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.04);\">\n          <div style=\"overflow-x:auto;\">\n            <table style=\"width:100%;border-collapse:collapse;font-size:13px;\">\n              <thead>\n                <tr style=\"background:#FEF2F2;\">\n                  <th style=\"padding:11px 14px;text-align:center;font-size:11px;font-weight:700;color:#EF4444;text-transform:uppercase;letter-spacing:.06em;\">ACK</th>\n                  <th style=\"padding:11px 14px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Slave ID</th>\n                  <th style=\"padding:11px 14px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Destination</th>\n                  <th style=\"padding:11px 14px;text-align:right;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Alerted Value</th>\n                  <th style=\"padding:11px 14px;text-align:center;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Alarm Type</th>\n                  <th style=\"padding:11px 14px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Start Time</th>\n                  <th style=\"padding:11px 14px;text-align:left;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;\">Acknowledgement</th>\n                </tr>\n              </thead>\n              <tbody>\n                <tr v-for=\"(row,i) in displayAlarmRows\" :key=\"i\" :style=\"{background:row.ack?'#F0FDF4':(i%2===0?'#FFFFFF':'#FFF5F5')}\">\n                  <td style=\"padding:9px 14px;border-bottom:1px solid #E2E8F0;text-align:center;\">\n                    <button v-if=\"!row.ack\" @click=\"openAckModal(row)\" style=\"background:#EF4444;color:#fff;border:none;border-radius:6px;padding:4px 11px;font-size:11px;font-weight:700;cursor:pointer;\" onmouseover=\"this.style.background='#DC2626'\" onmouseout=\"this.style.background='#EF4444'\">ACK</button>\n                    <span v-else style=\"color:#22C55E;font-size:14px;font-weight:700;\">✓</span>\n                  </td>\n                  <td style=\"padding:9px 14px;border-bottom:1px solid #E2E8F0;font-weight:700;color:#EF4444;\">{{ row.slave_id }}</td>\n                  <td style=\"padding:9px 14px;border-bottom:1px solid #E2E8F0;color:#475569;\">{{ fmtDest(row.location,row.roomNo) }}</td>\n                  <td style=\"padding:9px 14px;border-bottom:1px solid #E2E8F0;text-align:right;font-weight:800;color:#EF4444;\">{{ row.alert_dp_value }}</td>\n                  <td style=\"padding:9px 14px;border-bottom:1px solid #E2E8F0;text-align:center;\">\n                    <span :style=\"{display:'inline-flex',alignItems:'center',gap:'4px',padding:'3px 9px',borderRadius:'20px',fontSize:'11px',fontWeight:'700',background:row.alarmType==='LOW'?'#EFF6FF':'#FEF2F2',color:row.alarmType==='LOW'?'#3B82F6':'#EF4444',border:'1px solid '+(row.alarmType==='LOW'?'#BFDBFE':'#FECACA')}\">\n                      {{ row.alarmType }}\n                    </span>\n                  </td>\n                  <td style=\"padding:9px 14px;border-bottom:1px solid #E2E8F0;color:#475569;font-size:12px;\">{{ fmtTs(row.alarm_start) }}</td>\n                  <td style=\"padding:9px 14px;border-bottom:1px solid #E2E8F0;\">\n                    <div v-if=\"row.ack\" style=\"display:flex;flex-direction:column;gap:2px;\">\n                      <span style=\"color:#22C55E;font-weight:700;font-size:12px;\">✓ Acknowledged</span>\n                      <span style=\"font-size:11px;color:#6B7280;\">By: <b>{{ row.ack.ackedBy }}</b></span>\n                      <span style=\"font-size:11px;color:#6B7280;\">{{ fmtDate(row.ack.ackedAt) }}</span>\n                      <span v-if=\"row.ack.remarks\" style=\"font-size:11px;color:#94A3B8;font-style:italic;\">\"{{ row.ack.remarks }}\"</span>\n                    </div>\n                    <span v-else style=\"display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;background:#FFF7ED;font-size:11px;font-weight:700;color:#EA580C;border:1px solid #FED7AA;\">⏳ Pending</span>\n                  </td>\n                </tr>\n                <tr v-if=\"displayAlarmRows.length===0\"><td colspan=\"7\" style=\"padding:32px;text-align:center;color:#6B7280;font-size:13px;\">No alarm events found for this filter.</td></tr>\n              </tbody>\n            </table>\n          </div>\n        </div>\n      </div>\n      <div v-if=\"!alarmLoading && alarmRows.length===0 && alarmHasQueried\" style=\"text-align:center;padding:48px;color:#6B7280;font-size:14px;\">No alarm events found for the selected criteria.</div>\n    </template>\n\n  </div>\n\n  <!-- ACK MODAL -->\n  <div v-if=\"ackModalOpen\" style=\"position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(15,23,42,0.55);z-index:9999;display:flex;align-items:center;justify-content:center;\" @click.self=\"ackModalOpen=false\">\n    <div style=\"background:#FFFFFF;border-radius:16px;padding:28px 30px;width:92%;max-width:460px;box-shadow:0 24px 60px rgba(0,0,0,0.25);border:1px solid #E2E8F0;\">\n      <div style=\"display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;\">\n        <div>\n          <div style=\"font-size:16px;font-weight:800;color:#0F172A;\">🔔 Acknowledge Alarm</div>\n          <div style=\"font-size:12px;color:#6B7280;margin-top:3px;\">Confirm receipt and action for this alarm event</div>\n        </div>\n        <button @click=\"ackModalOpen=false\" style=\"background:#F1F5F9;border:none;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:16px;color:#475569;\">✕</button>\n      </div>\n      <div v-if=\"ackRow\" style=\"display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;\">\n        <div style=\"background:#F8FAFC;border-radius:8px;padding:10px 13px;border:1px solid #E2E8F0;\">\n          <div style=\"font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;\">Slave ID</div>\n          <div style=\"font-size:16px;font-weight:800;color:#EF4444;\">{{ ackRow.slave_id }}</div>\n        </div>\n        <div style=\"background:#F8FAFC;border-radius:8px;padding:10px 13px;border:1px solid #E2E8F0;\">\n          <div style=\"font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;\">Alarm Type</div>\n          <div style=\"font-size:14px;font-weight:700;\" :style=\"{color:ackRow.alarmType==='LOW'?'#3B82F6':'#EF4444'}\">{{ ackRow.alarmType }}</div>\n        </div>\n        <div style=\"background:#F8FAFC;border-radius:8px;padding:10px 13px;border:1px solid #E2E8F0;grid-column:span 2;\">\n          <div style=\"font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;\">Destination</div>\n          <div style=\"font-size:13px;font-weight:600;color:#0F172A;\">{{ fmtDest(ackRow.location,ackRow.roomNo) }}</div>\n        </div>\n        <div style=\"background:#FEF2F2;border-radius:8px;padding:10px 13px;border:1px solid #FECACA;\">\n          <div style=\"font-size:10px;font-weight:700;color:#EF4444;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;\">Alarm Start</div>\n          <div style=\"font-size:12px;font-weight:600;color:#0F172A;\">{{ fmtTs(ackRow.alarm_start) }}</div>\n        </div>\n        <div style=\"background:#F8FAFC;border-radius:8px;padding:10px 13px;border:1px solid #E2E8F0;\">\n          <div style=\"font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;\">Alarm End</div>\n          <div style=\"font-size:12px;font-weight:600;color:#0F172A;\">{{ fmtTs(ackRow.alarm_end) }}</div>\n        </div>\n        <div style=\"background:#EFF6FF;border-radius:8px;padding:10px 13px;border:1px solid #BFDBFE;grid-column:span 2;\">\n          <div style=\"font-size:10px;font-weight:700;color:#3B82F6;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;\">Acknowledged By</div>\n          <div style=\"font-size:14px;font-weight:700;color:#0F172A;\">{{ loggedInUser || 'Unknown' }}</div>\n        </div>\n      </div>\n      <div style=\"margin-bottom:18px;\">\n        <label style=\"display:block;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px;\">Remarks</label>\n        <textarea v-model=\"ackRemarks\" placeholder=\"Enter acknowledgement remarks (optional)...\" rows=\"3\" style=\"width:100%;box-sizing:border-box;padding:10px 13px;border:1px solid #E2E8F0;border-radius:8px;font-size:13px;outline:none;color:#0F172A;resize:vertical;\" onfocus=\"this.style.borderColor='#3B82F6';\" onblur=\"this.style.borderColor='#E2E8F0';\"></textarea>\n      </div>\n      <div style=\"display:flex;justify-content:flex-end;gap:10px;padding-top:16px;border-top:1px solid #E2E8F0;\">\n        <button @click=\"ackModalOpen=false\" style=\"padding:10px 22px;border:1px solid #E2E8F0;background:#FFFFFF;border-radius:8px;cursor:pointer;font-size:13px;color:#475569;font-weight:600;\">Cancel</button>\n        <button @click=\"submitAck\" style=\"padding:10px 24px;border:none;background:#22C55E;color:#fff;border-radius:8px;cursor:pointer;font-size:13px;font-weight:700;box-shadow:0 4px 12px rgba(34,197,94,0.35);\" onmouseover=\"this.style.background='#16A34A'\" onmouseout=\"this.style.background='#22C55E'\">✓ Acknowledge</button>\n      </div>\n    </div>\n  </div>\n\n  <script>\n  (function () {\n  var PAGES = [\n    { label: 'DP Monitor',    path: '/dashboard/page2'      },\n    { label: 'Performance',   path: '/dashboard/performance' },\n    { label: 'Daily Reports', path: '/dashboard/reports'     },\n  ];\n  function getCurrentTab() {\n    var p = window.location.pathname; var best = null, bestLen = 0;\n    for (var i = 0; i < PAGES.length; i++) { var pg = PAGES[i]; if (p.startsWith(pg.path) && pg.path.length > bestLen) { best = pg; bestLen = pg.path.length; } }\n    return best;\n  }\n  function updateActiveTab() { var current = getCurrentTab(); document.querySelectorAll('.jp-nav-tab').forEach(function(tab) { tab.classList.toggle('jp-active', !!(current && tab.dataset.path === current.path)); }); }\n  function navigate(path) {\n    if (window.location.pathname === path) return;\n    var content = document.querySelector('.nrdb-ui-page') || document.body;\n    content.style.transition = 'opacity 0.12s ease'; content.style.opacity = '0';\n    setTimeout(function() { history.pushState({}, '', path); window.dispatchEvent(new PopStateEvent('popstate', { state: {} })); updateActiveTab(); setTimeout(function() { content.style.opacity = '1'; }, 80); }, 120);\n  }\n  function injectNav() {\n    if (document.getElementById('jetpace-topnav')) { updateActiveTab(); return; }\n    var current = getCurrentTab(); var nav = document.createElement('div'); nav.id = 'jetpace-topnav';\n    nav.innerHTML = '<div class=\"jp-brand\"><div class=\"jp-brand-logo\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M12 3C7.03 3 3 7.03 3 12c0 2.39.88 4.57 2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><path d=\"M12 3c4.97 0 9 4.03 9 9 0 2.39-.88 4.57-2.33 6.25\" stroke=\"rgba(255,255,255,0.9)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/><circle cx=\"12\" cy=\"12\" r=\"1.5\" fill=\"white\"/><line x1=\"12\" y1=\"12\" x2=\"8\" y2=\"8\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg></div><span class=\"jp-brand-name\">Jetpace</span></div><div class=\"jp-nav-pills\">' + PAGES.map(function(pg) { var isActive = current && current.path === pg.path; return '<button class=\"jp-nav-tab' + (isActive ? ' jp-active' : '') + '\" data-path=\"' + pg.path + '\">' + pg.label + '</button>'; }).join('') + '</div><div class=\"jp-spacer\"></div>';\n    nav.querySelectorAll('.jp-nav-tab').forEach(function(btn) { btn.addEventListener('click', function() { navigate(btn.dataset.path); }); });\n    document.body.prepend(nav);\n  }\n  var _pushState = history.pushState.bind(history); history.pushState = function() { _pushState.apply(history, arguments); setTimeout(updateActiveTab, 80); };\n  window.addEventListener('popstate', function() { setTimeout(updateActiveTab, 80); });\n  function tryInject() { if (document.body) { injectNav(); } else { setTimeout(tryInject, 50); } }\n  tryInject(); setTimeout(injectNav, 500); setTimeout(injectNav, 1500);\n  })();\n  </script>\n</template>\n\n<script>\nexport default {\n  data() {\n    const today = new Date();\n    const pad = n => String(n).padStart(2,'0');\n    const todayStr = today.getFullYear()+'-'+pad(today.getMonth()+1)+'-'+pad(today.getDate());\n    return {\n      activeMainTab: 'parameter',\n      slaveInput:'', interval:'hourly', dateFrom:todayStr, dateTo:todayStr,\n      reportRows:[], reportMeta:{}, loading:false, hasQueried:false, statusMsg:'', statusError:false, activeTab:'all',\n      alarmRows:[], alarmMeta:{}, alarmLoading:false, alarmHasQueried:false, alarmStatusMsg:'', alarmStatusError:false, alarmActiveTab:'all',\n      ackModalOpen:false, ackRow:null, ackRemarks:'',\n      downloadMenuOpen:false, loggedInUser:'', userMenuOpen:false\n    };\n  },\n  mounted() { this.send({payload:{action:'session-check'}}); },\n  computed: {\n    uniqueSlaves()      { return [...new Set(this.reportRows.map(r=>r.slave_id))].sort((a,b)=>a-b); },\n    displayRows()       { return this.activeTab==='all'?this.reportRows:this.reportRows.filter(r=>r.slave_id===this.activeTab); },\n    alertCount()        { return this.reportRows.filter(r=>r.had_alert).length; },\n    uniqueAlarmSlaves() { return [...new Set(this.alarmRows.map(r=>r.slave_id))].sort((a,b)=>a-b); },\n    displayAlarmRows()  { return this.alarmActiveTab==='all'?this.alarmRows:this.alarmRows.filter(r=>r.slave_id===this.alarmActiveTab); },\n    pendingAckCount()   { return this.alarmRows.filter(r=>!r.ack).length; }\n  },\n  methods: {\n    toggleUserMenu(e) { e.stopPropagation(); this.userMenuOpen=!this.userMenuOpen; },\n    doLogout() { this.userMenuOpen=false; this.send({payload:{action:'do-logout'}}); },\n    fmtDest(loc,rm)  { const p=[loc,rm].filter(v=>v&&v.trim()); return p.length?p.join(' / '):'—'; },\n    fmtDate(iso)     { if(!iso)return '—'; try{return new Date(iso).toLocaleString();}catch(e){return iso;} },\n    fmtTs(ts)        { if(!ts)return '—'; const s=String(ts); return s.length>19?s.substring(0,19).replace('T',' '):s; },\n    parseSlaveIds(raw) {\n      const ids=new Set();\n      (raw||'').split(',').forEach(part=>{part=part.trim();const m=part.match(/^(\\d+)-(\\d+)$/);if(m){for(let i=parseInt(m[1]);i<=parseInt(m[2])&&i<=200;i++)ids.add(i);}else{const n=parseInt(part);if(!isNaN(n)&&n>=1&&n<=200)ids.add(n);}});\n      return Array.from(ids).sort((a,b)=>a-b);\n    },\n    previewReport() {\n      if(this.activeMainTab==='parameter') this._previewParam(); else this._previewAlarm();\n    },\n    _previewParam() {\n      const ids=this.parseSlaveIds(this.slaveInput);\n      if(!ids.length){this.statusMsg='Enter at least one valid Slave ID.';this.statusError=true;return;}\n      if(!this.dateFrom||!this.dateTo){this.statusMsg='Select both dates.';this.statusError=true;return;}\n      if(this.dateFrom>this.dateTo){this.statusMsg='From date cannot be after To date.';this.statusError=true;return;}\n      this.loading=true;this.statusMsg='';this.hasQueried=true;this.reportRows=[];this.activeTab='all';\n      this.send({payload:{action:'report-query',slaveIds:ids,interval:this.interval,dateFrom:this.dateFrom,dateTo:this.dateTo}});\n    },\n    _previewAlarm() {\n      const ids=this.parseSlaveIds(this.slaveInput);\n      if(!ids.length){this.alarmStatusMsg='Enter at least one valid Slave ID.';this.alarmStatusError=true;return;}\n      if(!this.dateFrom||!this.dateTo){this.alarmStatusMsg='Select both dates.';this.alarmStatusError=true;return;}\n      if(this.dateFrom>this.dateTo){this.alarmStatusMsg='From date cannot be after To date.';this.alarmStatusError=true;return;}\n      this.alarmLoading=true;this.alarmStatusMsg='';this.alarmHasQueried=true;this.alarmRows=[];this.alarmActiveTab='all';\n      this.send({payload:{action:'alarm-report-query',slaveIds:ids,interval:this.interval,dateFrom:this.dateFrom,dateTo:this.dateTo}});\n    },\n    openAckModal(row) { this.ackRow=row; this.ackRemarks=''; this.ackModalOpen=true; },\n    submitAck() {\n      if(!this.ackRow)return;\n      const r=this.ackRow;\n      this.send({payload:{action:'ack-save',slaveId:r.slave_id,period:r.period,destination:this.fmtDest(r.location,r.roomNo),alarmStart:r.alarm_start,alarmEnd:r.alarm_end,ackedBy:this.loggedInUser||'Unknown',remarks:this.ackRemarks}});\n      this.ackModalOpen=false; this.ackRow=null;\n    },\n    _drawChartOnCanvas(slaveId,rows) {\n      const cv=document.getElementById('dpReportChart');if(!cv)return null;\n      const W=860,H=340;cv.width=W;cv.height=H;\n      const ctx=cv.getContext('2d');const PL=60,PR=24,PT=24,PB=52,PW=W-PL-PR,PH=H-PT-PB;\n      ctx.clearRect(0,0,W,H);ctx.fillStyle='#FFFFFF';ctx.fillRect(0,0,W,H);\n      const pts=rows.map(r=>({v:parseFloat(r.dp_value),t:r.period,alert:!!r.had_alert}));\n      if(pts.length<1)return null;\n      const rawMin=Math.min(...pts.map(p=>p.v)),rawMax=Math.max(...pts.map(p=>p.v));\n      const yMin=rawMin<0?Math.max(-100,Math.floor(rawMin)-2):0,yMax=Math.max(10,Math.ceil(rawMax)+2),yRange=yMax-yMin;\n      const yf=v=>PT+PH-((v-yMin)/yRange)*PH,xf=i=>PL+(pts.length<2?PW/2:(i/(pts.length-1))*PW);\n      ctx.font='bold 13px Arial';ctx.fillStyle='#0F172A';ctx.textAlign='left';ctx.textBaseline='top';\n      ctx.fillText('Slave ID '+slaveId+' — '+this.reportMeta.interval+' DP Values',PL,4);\n      const yStep=yRange<=20?1:yRange<=50?5:yRange<=100?10:Math.ceil(yRange/10);\n      ctx.font='10px Arial';ctx.textAlign='right';ctx.textBaseline='middle';\n      for(let y=yMin;y<=yMax;y+=yStep){const py=yf(y);ctx.strokeStyle=y===0&&yMin<0?'rgba(71,85,105,0.4)':'rgba(226,232,240,0.9)';ctx.lineWidth=y===0&&yMin<0?1.5:1;ctx.setLineDash(y===0&&yMin<0?[5,4]:[]);ctx.beginPath();ctx.moveTo(PL,py);ctx.lineTo(W-PR,py);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#6B7280';ctx.fillText(y,PL-6,py);}\n      if(pts.length>1){ctx.font='9px Arial';ctx.fillStyle='#6B7280';ctx.textAlign='center';ctx.textBaseline='top';const maxL=8,step=Math.ceil((pts.length-1)/(maxL-1)),shown=new Set();for(let i=0;i<pts.length;i+=step)shown.add(i);shown.add(0);shown.add(pts.length-1);shown.forEach(i=>{const px=xf(i),label=String(pts[i].t).length>12?String(pts[i].t).substring(5):pts[i].t;ctx.fillText(label,px,H-PB+8);});}\n      ctx.strokeStyle='#E2E8F0';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(PL,PT);ctx.lineTo(PL,PT+PH);ctx.stroke();ctx.beginPath();ctx.moveTo(PL,PT+PH);ctx.lineTo(W-PR,PT+PH);ctx.stroke();\n      if(pts.length<2){ctx.font='13px Arial';ctx.fillStyle='#CBD5E1';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('Not enough data',W/2,H/2);return cv.toDataURL('image/png');}\n      const grad=ctx.createLinearGradient(0,PT,0,PT+PH);grad.addColorStop(0,'rgba(59,130,246,0.35)');grad.addColorStop(1,'rgba(59,130,246,0.00)');\n      ctx.save();ctx.beginPath();ctx.moveTo(xf(0),yf(pts[0].v));for(let i=1;i<pts.length;i++){const cpx=(xf(i-1)+xf(i))/2;ctx.bezierCurveTo(cpx,yf(pts[i-1].v),cpx,yf(pts[i].v),xf(i),yf(pts[i].v));}ctx.lineTo(xf(pts.length-1),yf(yMin));ctx.lineTo(xf(0),yf(yMin));ctx.closePath();ctx.fillStyle=grad;ctx.fill();ctx.restore();\n      ctx.save();ctx.beginPath();ctx.strokeStyle='#3B82F6';ctx.lineWidth=2.2;ctx.lineJoin='round';ctx.moveTo(xf(0),yf(pts[0].v));for(let i=1;i<pts.length;i++){const cpx=(xf(i-1)+xf(i))/2;ctx.bezierCurveTo(cpx,yf(pts[i-1].v),cpx,yf(pts[i].v),xf(i),yf(pts[i].v));}ctx.stroke();ctx.restore();\n      pts.forEach((p,i)=>{if(!p.alert)return;ctx.save();ctx.beginPath();ctx.arc(xf(i),yf(p.v),5,0,Math.PI*2);ctx.fillStyle='#EF4444';ctx.shadowColor='rgba(239,68,68,0.5)';ctx.shadowBlur=6;ctx.fill();ctx.restore();});\n      return cv.toDataURL('image/png');\n    },\n    _dl(content,filename,type) {\n      const blob=new Blob([content],{type});const url=URL.createObjectURL(blob);\n      const a=document.createElement('a');a.href=url;a.download=filename;a.style.display='none';\n      document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},300);\n    },\n    downloadParamCSV() {\n      this.downloadMenuOpen=false;\n      if(!this.reportRows.length){this.statusMsg='No data to download.';this.statusError=true;return;}\n      let csv='Slave ID,Destination,DP Value,Alarm Status,Timestamp\\n';\n      this.displayRows.forEach(r=>{csv+=`${r.slave_id},\"${this.fmtDest(r.location,r.roomNo)}\",${r.dp_value},${r.had_alert?'ALERT':'NORMAL'},\"${r.period}\"\\n`;});\n      this._dl('\\uFEFF'+csv,'dp_param_'+this.dateFrom+'_'+this.dateTo+'.csv','text/csv;charset=utf-8;');\n      this.statusMsg='CSV downloaded.';this.statusError=false;\n    },\n    downloadParamPDF(withChart) {\n      this.downloadMenuOpen=false;\n      if(!this.reportRows.length){this.statusMsg='No data.';this.statusError=true;return;}\n      const rows=this.displayRows,meta=this.reportMeta;\n      const slaveIds=this.activeTab==='all'?this.uniqueSlaves:[this.activeTab];\n      const chartImages={};\n      if(withChart){slaveIds.forEach(sid=>{chartImages[sid]=this._drawChartOnCanvas(sid,rows.filter(r=>r.slave_id===sid));});}\n      let body='';\n      slaveIds.forEach(sid=>{\n        const sr=rows.filter(r=>r.slave_id===sid);const alertCnt=sr.filter(r=>r.had_alert).length;\n        let chartBlock='';\n        if(withChart&&chartImages[sid]){chartBlock=`<div style=\"margin-bottom:18px;\"><div style=\"font-size:12px;font-weight:700;color:#0F172A;margin-bottom:8px;padding-left:8px;border-left:3px solid #3B82F6;\">📈 Chart — Slave ID ${sid}</div><img src=\"${chartImages[sid]}\" style=\"width:100%;border-radius:8px;border:1px solid #E2E8F0;\"/></div>`;}\n        const tb=sr.map((r,i)=>{const bg=r.had_alert?'#FEF2F2':(i%2===0?'#fff':'#F8FAFC');return `<tr style=\"background:${bg}\"><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;font-weight:700;color:#3B82F6;\">${r.slave_id}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;\">${this.fmtDest(r.location,r.roomNo)}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;text-align:right;font-weight:700;\">${r.dp_value}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;text-align:center;\"><span style=\"font-weight:700;font-size:11px;color:${r.had_alert?'#EF4444':'#22C55E'}\">${r.had_alert?'ALERT':'NORMAL'}</span></td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;\">${r.period}</td></tr>`;}).join('');\n        const sep=body?'<div style=\"page-break-before:always;margin-top:28px;\"></div>':'';\n        body+=`${sep}<div style=\"font-size:14px;font-weight:800;margin-bottom:12px;\"><span style=\"background:#3B82F6;color:#fff;padding:3px 12px;border-radius:6px;font-size:12px;\">Slave ID ${sid}</span> <span style=\"font-size:11px;color:#6B7280;\">${sr.length} rows · ${alertCnt} alerts</span></div>${chartBlock}<table><thead><tr><th>Slave ID</th><th>Destination</th><th style=\"text-align:right;\">DP Value</th><th style=\"text-align:center;\">Alarm Status</th><th>Timestamp</th></tr></thead><tbody>${tb}</tbody></table>`;\n      });\n      const html=`<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>DP Parameter Report</title><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;font-size:12px;color:#0F172A;padding:28px 32px;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;border-bottom:2px solid #E2E8F0;padding-bottom:14px;}table{width:100%;border-collapse:collapse;margin-bottom:8px;}thead tr{background:#E2E8F0;}th{padding:7px 10px;color:#475569;font-size:11px;font-weight:700;text-align:left;}.foot{margin-top:18px;font-size:10px;color:#6B7280;text-align:right;border-top:1px solid #E2E8F0;padding-top:8px;}</style></head><body><div class=\"hdr\"><div><h1 style=\"font-size:18px;font-weight:800;margin-bottom:4px;\">📊 DP Parameter Report${withChart?' — with Charts':''}</h1><div style=\"font-size:11px;color:#475569;\">Interval: <b>${meta.interval}</b> | Devices: <b>${slaveIds.length}</b> | Total: <b>${rows.length}</b></div></div><div style=\"background:#0F172A;color:#fff;padding:10px 18px;border-radius:10px;text-align:center;\"><div style=\"font-size:9px;opacity:0.6;text-transform:uppercase;\">Period</div><div style=\"font-size:13px;font-weight:800;\">${meta.dateFrom} → ${meta.dateTo}</div></div></div>${body}<div class=\"foot\">Generated: ${new Date().toLocaleString()} — Jetpace Monitoring System</div></body></html>`;\n      const win=window.open('','_blank','width=1000,height=800');\n      if(win){win.document.write(html);win.document.close();win.focus();setTimeout(()=>win.print(),900);}\n      else{this.statusMsg='Popup blocked.';this.statusError=true;}\n    },\n    downloadAlarmCSV() {\n      this.downloadMenuOpen=false;\n      if(!this.alarmRows.length){this.alarmStatusMsg='No data.';this.alarmStatusError=true;return;}\n      let csv='Slave ID,Destination,Alerted Value,Alarm Type,Start Time,End Time,ACK Status,Acknowledged By,ACK Time,Remarks\\n';\n      this.displayAlarmRows.forEach(r=>{\n        const ackStatus=r.ack?'Acknowledged':'Pending';\n        const ackedBy=r.ack?(r.ack.ackedBy||''):'';\n        const ackedAt=r.ack?this.fmtDate(r.ack.ackedAt):'';\n        const remarks=r.ack?(r.ack.remarks||'').replace(/\"/g,\"'\"):'';\n        csv+=`${r.slave_id},\"${this.fmtDest(r.location,r.roomNo)}\",${r.alert_dp_value},${r.alarmType},\"${this.fmtTs(r.alarm_start)}\",\"${this.fmtTs(r.alarm_end)}\",${ackStatus},\"${ackedBy}\",\"${ackedAt}\",\"${remarks}\"\\n`;\n      });\n      this._dl('\\uFEFF'+csv,'dp_alarm_'+this.dateFrom+'_'+this.dateTo+'.csv','text/csv;charset=utf-8;');\n      this.alarmStatusMsg='CSV downloaded.';this.alarmStatusError=false;\n    },\n    downloadAlarmPDF() {\n      this.downloadMenuOpen=false;\n      if(!this.alarmRows.length){this.alarmStatusMsg='No data.';this.alarmStatusError=true;return;}\n      const rows=this.displayAlarmRows,meta=this.alarmMeta;\n      const pendCnt=rows.filter(r=>!r.ack).length,ackCnt=rows.filter(r=>r.ack).length;\n      const tb=rows.map((r,i)=>{\n        const bg=r.ack?'#F0FDF4':(i%2===0?'#fff':'#FFF5F5');\n        const ackCell=r.ack?`<div style=\"color:#22C55E;font-weight:700;\">✓ Acknowledged</div><div style=\"font-size:10px;color:#6B7280;\">By: ${r.ack.ackedBy} · ${this.fmtDate(r.ack.ackedAt)}</div>${r.ack.remarks?`<div style=\"font-size:10px;color:#94A3B8;font-style:italic;\">\"${r.ack.remarks}\"</div>`:''}`:'<span style=\"color:#EA580C;font-weight:700;\">⏳ Pending</span>';\n        return `<tr style=\"background:${bg}\"><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;font-weight:700;color:#EF4444;\">${r.slave_id}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;\">${this.fmtDest(r.location,r.roomNo)}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;text-align:right;font-weight:700;color:#EF4444;\">${r.alert_dp_value}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;text-align:center;\"><span style=\"font-weight:700;font-size:11px;color:${r.alarmType==='LOW'?'#3B82F6':'#EF4444'}\">${r.alarmType}</span></td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;font-size:11px;\">${this.fmtTs(r.alarm_start)}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;font-size:11px;\">${this.fmtTs(r.alarm_end)}</td><td style=\"padding:5px 10px;border-bottom:1px solid #E2E8F0;\">${ackCell}</td></tr>`;\n      }).join('');\n      const html=`<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>DP Alarm Report</title><style>*{box-sizing:border-box;margin:0;padding:0;}body{font-family:Arial,sans-serif;font-size:12px;color:#0F172A;padding:28px 32px;}.hdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;border-bottom:2px solid #E2E8F0;padding-bottom:14px;}table{width:100%;border-collapse:collapse;}thead tr{background:#FEF2F2;}th{padding:7px 10px;color:#EF4444;font-size:11px;font-weight:700;text-align:left;}.foot{margin-top:18px;font-size:10px;color:#6B7280;text-align:right;border-top:1px solid #E2E8F0;padding-top:8px;}</style></head><body><div class=\"hdr\"><div><h1 style=\"font-size:18px;font-weight:800;margin-bottom:4px;\">🔔 DP Alarm Report</h1><div style=\"font-size:11px;color:#475569;line-height:1.8;\">Interval: <b>${meta.interval}</b> | Events: <b>${rows.length}</b> | <span style=\"color:#EF4444;\">Pending: <b>${pendCnt}</b></span> | <span style=\"color:#22C55E;\">Acknowledged: <b>${ackCnt}</b></span></div></div><div style=\"background:#0F172A;color:#fff;padding:10px 18px;border-radius:10px;text-align:center;\"><div style=\"font-size:9px;opacity:0.6;text-transform:uppercase;\">Period</div><div style=\"font-size:13px;font-weight:800;\">${meta.dateFrom} → ${meta.dateTo}</div></div></div><table><thead><tr><th>Slave ID</th><th>Destination</th><th style=\"text-align:right;\">Alerted Value</th><th style=\"text-align:center;\">Alarm Type</th><th>Start Time</th><th>End Time</th><th>Acknowledgement</th></tr></thead><tbody>${tb}</tbody></table><div class=\"foot\">Generated: ${new Date().toLocaleString()} — Jetpace Monitoring System</div></body></html>`;\n      const win=window.open('','_blank','width=1100,height=800');\n      if(win){win.document.write(html);win.document.close();win.focus();setTimeout(()=>win.print(),900);}\n      else{this.alarmStatusMsg='Popup blocked.';this.alarmStatusError=true;}\n    }\n  },\n  watch: {\n    msg(m) {\n      if(!m||!m.payload)return;\n      if(m.payload.action==='session-result'){\n        if(!m.payload.authenticated){\n          const la=localStorage.getItem('jp_auth'),lu=localStorage.getItem('jp_user');\n          if(la==='1'&&lu){this.loggedInUser=lu;return;}\n          window.location.href='/dashboard/login';return;\n        }\n        if(m.payload.userId){this.loggedInUser=m.payload.userId;localStorage.setItem('jp_user',m.payload.userId);localStorage.setItem('jp_auth','1');}\n        return;\n      }\n      if(m.payload.action==='navigate-login'){localStorage.removeItem('jp_auth');localStorage.removeItem('jp_user');window.location.href='/dashboard/login';return;}\n      if(m.payload.action==='report-result'){\n        this.loading=false;\n        if(m.payload.error){this.statusMsg=m.payload.error;this.statusError=true;return;}\n        this.reportRows=(m.payload.rows||[]).map(r=>({...r,slave_id:Number(r.slave_id),had_alert:r.had_alert===1||r.had_alert===true}));\n        this.reportMeta=m.payload.meta||{};\n        this.statusMsg=this.reportRows.length===0?'No records found.':`Report loaded: ${this.reportRows.length} rows across ${this.uniqueSlaves.length} device(s).`;\n        this.statusError=false;\n      }\n      if(m.payload.action==='alarm-report-result'){\n        this.alarmLoading=false;\n        if(m.payload.error){this.alarmStatusMsg=m.payload.error;this.alarmStatusError=true;return;}\n        this.alarmRows=m.payload.rows||[];\n        this.alarmMeta=m.payload.meta||{};\n        this.alarmStatusMsg=this.alarmRows.length===0?'No alarm events found.':`Alarm report: ${this.alarmRows.length} event(s) across ${this.uniqueAlarmSlaves.length} device(s).`;\n        this.alarmStatusError=false;\n      }\n      if(m.payload.action==='ack-result'&&m.payload.success){\n        const key=m.payload.key,ack=m.payload.ack;\n        const idx=this.alarmRows.findIndex(r=>`${r.slave_id}_${r.period}`===key);\n        if(idx>=0){this.alarmRows.splice(idx,1,{...this.alarmRows[idx],ack});}\n        this.alarmStatusMsg='Alarm acknowledged successfully.';this.alarmStatusError=false;\n      }\n    }\n  }\n};\n</script>",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 690,
+        "y": 420,
+        "wires": [
+            [
+                "ca875a7eba52503b"
+            ]
+        ]
+    },
+    {
+        "id": "c3160ca54743c360",
+        "type": "modbus-client",
+        "name": "",
+        "clienttype": "serial",
+        "bufferCommands": true,
+        "stateLogEnabled": false,
+        "queueLogEnabled": false,
+        "failureLogEnabled": true,
+        "tcpHost": "127.0.0.1",
+        "tcpPort": 502,
+        "tcpType": "DEFAULT",
+        "serialPort": "COM7",
+        "serialType": "RTU-BUFFERD",
+        "serialBaudrate": 9600,
+        "serialDatabits": 8,
+        "serialStopbits": 1,
+        "serialParity": "none",
+        "serialConnectionDelay": 100,
+        "serialAsciiResponseStartDelimiter": "0x3A",
+        "unit_id": 1,
+        "commandDelay": 50,
+        "clientTimeout": 500,
+        "reconnectOnTimeout": true,
+        "reconnectTimeout": "1000",
+        "parallelUnitIdsAllowed": false,
+        "showErrors": false,
+        "showWarnings": true,
+        "showLogs": true
+    },
+    {
+        "id": "50c3fd16ed798901",
+        "type": "MSSQL-CN",
+        "tdsVersion": "7_4",
+        "name": "msSQL_CN",
+        "server": "localhost",
+        "port": "1433",
+        "encyption": false,
+        "trustServerCertificate": false,
+        "database": "rishidb",
+        "useUTC": true,
+        "connectTimeout": "15000",
+        "requestTimeout": "15000",
+        "cancelTimeout": "5000",
+        "pool": "5",
+        "parseJSON": false,
+        "enableArithAbort": true,
+        "readOnlyIntent": false
+    },
+    {
+        "id": "98488f60b3c1e6bb",
+        "type": "ui-base",
+        "name": "My Dashboard",
+        "path": "/dashboard",
+        "appIcon": "",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-notification",
+            "ui-control"
+        ],
+        "showPathInSidebar": false,
+        "headerContent": "page",
+        "navigationStyle": "default",
+        "titleBarStyle": "default",
+        "showReconnectNotification": true,
+        "notificationDisplayTime": 1,
+        "showDisconnectNotification": true,
+        "allowInstall": false
+    },
+    {
+        "id": "ec2d755068cc1a13",
+        "type": "ui-group",
+        "name": "Login",
+        "page": "33e8c2f9232d6d51",
+        "width": "12",
+        "height": 1,
+        "order": 1,
+        "showTitle": false,
+        "className": "",
+        "visible": "false",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "6eecc98fee50f850",
+        "type": "ui-group",
+        "name": "DP",
+        "page": "a00f856d437698bc",
+        "width": "12",
+        "height": 1,
+        "order": 1,
+        "showTitle": false,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "a1b2c3d4e5f60002",
+        "type": "ui-group",
+        "name": "Performance Report",
+        "page": "a1b2c3d4e5f60001",
+        "width": "12",
+        "height": 1,
+        "order": 1,
+        "showTitle": false,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "a471d4923c697568",
+        "type": "ui-group",
+        "name": "Daily Reports",
+        "page": "3451f1f161a1581b",
+        "width": "12",
+        "height": 1,
+        "order": 1,
+        "showTitle": false,
+        "className": "",
+        "visible": "true",
+        "disabled": "false",
+        "groupType": "default"
+    },
+    {
+        "id": "33e8c2f9232d6d51",
+        "type": "ui-page",
+        "name": "Login",
+        "ui": "98488f60b3c1e6bb",
+        "path": "/login",
+        "icon": "lock",
+        "layout": "grid",
+        "theme": "839e085fd0f5b44b",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Small Desktop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 1,
+        "className": "",
+        "visible": "false",
+        "disabled": "false"
+    },
+    {
+        "id": "a00f856d437698bc",
+        "type": "ui-page",
+        "name": "DP",
+        "ui": "98488f60b3c1e6bb",
+        "path": "/page2",
+        "icon": "home",
+        "layout": "grid",
+        "theme": "839e085fd0f5b44b",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Small Desktop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 2,
+        "className": "",
+        "visible": "true",
+        "disabled": "false"
+    },
+    {
+        "id": "a1b2c3d4e5f60001",
+        "type": "ui-page",
+        "name": "Performance Report",
+        "ui": "98488f60b3c1e6bb",
+        "path": "/performance",
+        "icon": "chart-line",
+        "layout": "grid",
+        "theme": "839e085fd0f5b44b",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Small Desktop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 4,
+        "className": "",
+        "visible": "true",
+        "disabled": "false"
+    },
+    {
+        "id": "3451f1f161a1581b",
+        "type": "ui-page",
+        "name": "Daily Reports",
+        "ui": "98488f60b3c1e6bb",
+        "path": "/reports",
+        "icon": "chart-bar",
+        "layout": "grid",
+        "theme": "839e085fd0f5b44b",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": "0",
+                "cols": "3"
+            },
+            {
+                "name": "Tablet",
+                "px": "576",
+                "cols": "6"
+            },
+            {
+                "name": "Small Desktop",
+                "px": "768",
+                "cols": "9"
+            },
+            {
+                "name": "Desktop",
+                "px": "1024",
+                "cols": "12"
+            }
+        ],
+        "order": 3,
+        "className": "",
+        "visible": "true",
+        "disabled": "false"
+    },
+    {
+        "id": "839e085fd0f5b44b",
+        "type": "ui-theme",
+        "name": "Default Theme",
+        "colors": {
+            "surface": "#ffffff",
+            "primary": "#0094CE",
+            "bgPage": "#eeeeee",
+            "groupBg": "#ffffff",
+            "groupOutline": "#cccccc"
+        },
+        "sizes": {
+            "density": "default",
+            "pagePadding": "12px",
+            "groupGap": "12px",
+            "groupBorderRadius": "4px",
+            "widgetGap": "12px"
+        }
+    },
+    {
+        "id": "deda236c9ac555e2",
+        "type": "global-config",
+        "env": [],
+        "modules": {
+            "node-red-contrib-modbus": "5.45.2",
+            "node-red-contrib-mssql-plus": "0.13.1",
+            "@flowfuse/node-red-dashboard": "1.30.2"
+        }
+    }
+]
